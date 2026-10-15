@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wechat-lecture-tracker"
+version = "0.1.0"
+description = "Local Weixin lecture capture, evidence extraction and email reminders"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+wechat-track = "wechat_tracker.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["wechat_tracker*"]
+
+[tool.setuptools.package-data]
+wechat_tracker = ["resources/*.ps1", "resources/*.jsonl"]
+

@@ -1,0 +1,20 @@
+group = "2026级计算机研究生通知群"
+data_dir = "state"
+timezone = "Asia/Shanghai"
+reminder_minutes = [1440, 60]
+max_attempts = 5
+
+[capture]
+source = "windows_uia"
+process_name = "Weixin"
+timeout_seconds = 8
+
+[email]
+smtp_host = "smtp.qq.com"
+smtp_port = 465
+smtp_security = "ssl"
+smtp_user_env = "WECHAT_SMTP_USER"
+smtp_password_env = "WECHAT_SMTP_PASSWORD"
+from_env = "WECHAT_EMAIL_FROM"
+to_env = "WECHAT_EMAIL_TO"
+
