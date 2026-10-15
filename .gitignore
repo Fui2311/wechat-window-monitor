@@ -5,6 +5,7 @@ __pycache__/
 build/
 dist/
 state/
+tmp/pdfs/
 .env
 .env.*
 !.env.example

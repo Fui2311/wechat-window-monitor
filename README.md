@@ -15,6 +15,7 @@ python -m wechat_tracker --config config.local.toml service restart
 
 ## 先看方案和复用结论
 
+- [当前监控、语义识别与提醒机制说明](docs/监控与语义识别及提醒机制说明.md)：包含运行快照、流程图、规则识别与提醒计算样例；另有[Word版](docs/监控与语义识别及提醒机制说明.docx)和[PDF版](output/pdf/监控与语义识别及提醒机制说明.pdf)。
 - [方案与模块契约](docs/architecture.md)
 - [GitHub 项目源码核查](docs/github-reuse.md)：先检查现有模块，再按本机微信 4.1.15.13 的实际结构选择适配方式。
 - [Windows 采集与实测边界](docs/capture.md)
