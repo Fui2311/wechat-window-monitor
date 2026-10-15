@@ -28,18 +28,18 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/build-mac-package.py
-          unzip -q dist/WeChatLectureTracker-macOS-0.3.0.zip -d build/installer
-          cd build/installer/WeChatLectureTracker-macOS-0.3.0
+          unzip -q dist/WeChatLectureTracker-macOS-0.4.0.zip -d build/installer
+          cd build/installer/WeChatLectureTracker-macOS-0.4.0
           bash mac/install.command
           bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" verify --offline
           "$HOME/Applications/WeChat Lecture Tracker Capture.app/Contents/MacOS/wechat-capture" self-test
       - name: Save portable archive and native build results
         uses: actions/upload-artifact@v4
         with:
-          name: WeChatLectureTracker-macOS-0.3.0
+          name: WeChatLectureTracker-macOS-0.4.0
           retention-days: 14
           path: |
-            dist/WeChatLectureTracker-macOS-0.3.0.zip
-            dist/WeChatLectureTracker-macOS-0.3.0.zip.sha256
+            dist/WeChatLectureTracker-macOS-0.4.0.zip
+            dist/WeChatLectureTracker-macOS-0.4.0.zip.sha256
             build/mac/capture-arm64
             build/mac/capture-x86_64

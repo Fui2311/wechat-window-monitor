@@ -1,5 +1,11 @@
 # 需求与证据
 
+## 2026-10-15 GitHub与Mac交接
+- 用户要求生成HANDOFF.md、项目内容上传私密GitHub并交接到Mac继续开发。gh实时核实Fui2311/wechat_tracking为PRIVATE，main=d234774，工作区干净，无Release。
+- 完整开发树已入Git，dist构建包被忽略，应通过私密仓库Release上传；凭据、本机配置、聊天库/抓取与日志继续留本机。
+- 原始Git克隆没有SHA256SUMS，不能直接运行mac/install.command；必须先build-mac-package，再从带清单的独立安装ZIP解压目录安装。
+- 本轮只读状态monitoring，QQ未配置/实际发送0；不需停止Windows监控或迁移生产聊天数据库。
+
 ## 2026-10-15 手动报名新方案
 - 当前代码仍提取到场/地点/主讲/名单，地点缺失会阻断排程，到场时间优先作为提醒锚点；旧文档与新需求冲突。
 - 16:23实际服务monitoring，QQ未配置且email_sent=0；旧库派生数据需显式重算，普通消息重放会被去重跳过。

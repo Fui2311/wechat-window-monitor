@@ -13,7 +13,8 @@ ROOT = Path(__file__).resolve().parent.parent
 def build():
     version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     name = "WeChatLectureTracker-macOS-" + version
-    files = {"README.md": ROOT / "docs/macos.md", "pyproject.toml": ROOT / "pyproject.toml"}
+    files = {"README.md": ROOT / "docs/macos.md", "pyproject.toml": ROOT / "pyproject.toml",
+             "HANDOFF.md": ROOT / "HANDOFF.md"}
     for folder, extensions in (("mac", {".py", ".command", ".toml"}),
                                ("wechat_tracker", {".py", ".swift", ".jsonl"}),
                                ("examples", {".jsonl"})):

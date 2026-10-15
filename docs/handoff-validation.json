@@ -1,0 +1,75 @@
+{
+  "recorded_at": "2026-10-15T17:11:04+08:00",
+  "version": "0.4.0",
+  "baseline_feature_commit": "d234774",
+  "repository": "https://github.com/Fui2311/wechat_tracking",
+  "visibility": "PRIVATE",
+  "scope": "Windows-side handoff verification; not native Mac acceptance",
+  "tests": {
+    "command": "python -m unittest discover -s tests -q",
+    "ran": 150,
+    "failures": 0,
+    "errors": 0,
+    "platform": "win32"
+  },
+  "windows_service": {
+    "running": true,
+    "status": "monitoring",
+    "email_state": "not_configured",
+    "email_sent": 0,
+    "send_ready": false,
+    "journal_mode": "delete",
+    "process_identity_verified": true
+  },
+  "database": {
+    "integrity": "ok",
+    "counts": {
+      "messages": 8,
+      "events": 5,
+      "capture_seen": 7
+    },
+    "jobs": {
+      "pending": 9,
+      "superseded": 9
+    }
+  },
+  "existing_windows_observation": {
+    "status": "running",
+    "started_at": "2026-10-15T07:43:01+00:00",
+    "samples": 89,
+    "service_instance_changes": 1,
+    "capture_gap_increase": 1,
+    "unhealthy_samples": 0,
+    "observer_identity_verified": true,
+    "continuous_24h_pass": false,
+    "note": "The planned 0.4.0 deployment changed the instance; do not treat this as uninterrupted acceptance."
+  },
+  "mac_source_installer": {
+    "sha256": "9136401efd87316e2b4434e7e9bf5f76a7ce940ffb7be42fd0b8d0406701cb4d",
+    "manifest_files": 32,
+    "zip_crc": true,
+    "handoff_included": true,
+    "isolated_offline_replay": {
+      "events": 1,
+      "jobs": 3,
+      "duplicate_replay": true,
+      "smtp_sent": false
+    }
+  },
+  "mac_native_checks": {
+    "swift_compile": "pending Mac execution",
+    "code_signature": "pending Mac execution",
+    "accessibility_group_binding": "pending Mac execution",
+    "keychain": "pending Mac execution",
+    "launchagent": "pending Mac execution",
+    "smtp_delivery": "pending Mac execution",
+    "24h_observation": "pending Mac execution"
+  },
+  "excluded_from_upload": [
+    "local configuration",
+    "SMTP credentials and tokens",
+    "raw chat captures and production database",
+    "local backups and logs",
+    "virtual environments and build caches"
+  ]
+}
