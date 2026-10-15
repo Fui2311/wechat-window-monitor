@@ -1,0 +1,45 @@
+name: macOS build and installer validation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-validation:
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Python tests
+        run: python -m unittest discover -s tests -q
+      - name: Build both Mac architectures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/mac
+          for arch in arm64 x86_64; do
+            xcrun swiftc -O -swift-version 5 -target "${arch}-apple-macosx12.0" wechat_tracker/resources/mac-capture.swift -o "build/mac/capture-${arch}"
+          done
+          "build/mac/capture-$(uname -m)" self-test
+      - name: Build source archive and install on the runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/build-mac-package.py
+          unzip -q dist/WeChatLectureTracker-macOS-0.3.0.zip -d build/installer
+          cd build/installer/WeChatLectureTracker-macOS-0.3.0
+          bash mac/install.command
+          bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" verify --offline
+          "$HOME/Applications/WeChat Lecture Tracker Capture.app/Contents/MacOS/wechat-capture" self-test
+      - name: Save portable archive and native build results
+        uses: actions/upload-artifact@v4
+        with:
+          name: WeChatLectureTracker-macOS-0.3.0
+          retention-days: 14
+          path: |
+            dist/WeChatLectureTracker-macOS-0.3.0.zip
+            dist/WeChatLectureTracker-macOS-0.3.0.zip.sha256
+            build/mac/capture-arm64
+            build/mac/capture-x86_64
