@@ -1,8 +1,10 @@
 # macOS 独立监控安装与验收
 
-版本 0.3.0，目标为 macOS 12+、Python 3.11+。Apple Silicon 使用原生 arm64 Python，Intel Mac 使用 x86_64。业务分析、去重、队列和 QQ 邮箱提醒在 Mac 本地独立运行，无需 Windows 在线。
+版本 0.4.0，目标为 macOS 12+、Python 3.11+。Apple Silicon 使用原生 arm64 Python，Intel Mac 使用 x86_64。业务分析、去重、队列和 QQ 邮箱提醒在 Mac 本地独立运行，无需 Windows 在线。
 
-交付为 `WeChatLectureTracker-macOS-0.3.0.zip` **源码安装包**，带完整 SHA256 清单；不是已在 Mac 编译、公证的二进制 DMG。包内不含 Windows 脚本、Windows Python、聊天数据库或邮箱凭据。Windows 已做可移植代码/包内容验证；Swift 编译、Accessibility 选择器、Keychain 与 LaunchAgent 实际兼容性待后续 Mac 验收。
+交付为 `WeChatLectureTracker-macOS-0.4.0.zip` **源码安装包**，带完整 SHA256 清单；不是已在 Mac 编译、公证的二进制 DMG。包内不含 Windows 脚本、Windows Python、聊天数据库或邮箱凭据。Windows 已做可移植代码/包内容验证；Swift 编译、Accessibility 选择器、Keychain 与 LaunchAgent 实际兼容性待后续 Mac 验收。
+
+通知与Windows统一为讲座摘要、报名截止、活动时间三项；手动报名，提醒以活动开始为锚点。旧方案未发信数据库升级前须停止服务、运行 `rebuild-analysis`，然后保持原模式启动；命令建立校验备份，已有已发送记录时拒绝自动重放。
 
 ## 安装
 

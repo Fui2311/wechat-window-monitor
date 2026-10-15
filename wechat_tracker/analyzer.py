@@ -15,6 +15,7 @@ SHANGHAI = timezone(timedelta(hours=8))
 MAX_FORWARD_DEPTH = 4
 MAX_MESSAGE_NODES = 100
 MAX_TEXT_LENGTH = 50_000
+ANALYSIS_POLICY = "manual-signup-v1"
 
 _LECTURE = re.compile(r"讲座|学术报告|学术讲堂|学术沙龙|报告题目|报告主题|学术讲演")
 _UPDATE = re.compile(r"取消|改期|延期|变更|更改|调整|改为|改至|推迟|提前至")
@@ -32,19 +33,18 @@ _TIME = re.compile(
     rf"(?P<period>{_PERIOD})?\s*(?P<hour>\d{{1,2}})\s*[:：]\s*(?P<minute>\d{{2}})"
 )
 _RANGE_GAP = re.compile(r"^\s*[-－—–‑‐−~～至到]+\s*$")
-_DEADLINE = re.compile(r"(?:截止|截至)(?!签[到退])|报名时间|报名期限")
-_EVENT_TIME_LINE = re.compile(r"(?:讲座时间|报告时间|活动时间|举办时间)\s*[:：]")
+_DEADLINE = re.compile(r"报名(?:截止|截至|时间|期限)|(?:截止|截至)(?:时间|日期)|(?:报名|预约|登记)[^\n。；;]{0,40}(?:截止|截至)|(?:截止|截至)[^\n。；;]{0,30}(?:报名|预约|登记)|(?:请)?于[^\n。；;]{0,60}(?:前|之前)(?:完成)?(?:报名|预约|登记)")
+_EVENT_TIME_LINE = re.compile(r"(?:讲座时间|报告时间|活动时间|举办时间|时间)\s*[:：]")
 _WEEKDAY = re.compile(r"(?:星期|周|礼拜)([一二三四五六日天])")
 _TITLE_LABEL = re.compile(r"(?:讲座主题|讲座题目|报告主题|报告题目|主题|题目)\s*[:：]\s*(.+)")
-_LOCATION = re.compile(r"(?:讲座地点|报告地点|活动地点|地点|会场)\s*[:：]\s*(.+)")
-_SPEAKERS = re.compile(r"(?:主讲嘉宾|主讲人|主讲专家|主讲|报告人|演讲者|嘉宾)\s*[:：]\s*(.+)")
-_ARRIVAL = re.compile(r"提前\s*([\d一二三四五六七八九十两]+)\s*(?:分钟|分)(?:钟)?")
+_SUMMARY_LABEL = re.compile(r"(?:讲座摘要|报告摘要|内容摘要|讲座简介|报告简介|讲座内容|报告内容|内容简介|摘要|简介)\s*[:：]\s*(.*)")
 _FIELD_BOUNDARY = re.compile(
     r"[\U0001F000-\U0001FAFF\u2300-\u27FF\ufe0f]*[ \t]*"
     r"(?:讲座主题|讲座题目|报告主题|报告题目|主题|题目|"
     r"主讲嘉宾|主讲人|主讲专家|主讲|报告人|演讲者|嘉宾|"
-    r"讲座时间|报告时间|活动时间|举办时间|"
-    r"讲座地点|报告地点|活动地点|地点|会场|温馨提示|报名截止|报名截至)\s*[:：]"
+    r"讲座时间|报告时间|活动时间|举办时间|时间|"
+    r"讲座地点|报告地点|活动地点|地点|会场|温馨提示|报名截止时间|报名截至时间|报名截止|报名截至|报名时间|报名期限|"
+    r"讲座摘要|报告摘要|内容摘要|讲座简介|报告简介|讲座内容|报告内容|内容简介|摘要|简介)\s*[:：]"
 )
 
 
@@ -152,17 +152,38 @@ def _times(text: str) -> tuple[list[tuple[tuple[int, int], tuple[int, int] | Non
     return result, reasons
 
 
-def _number(value: str) -> int | None:
-    if value.isdigit():
-        return int(value)
-    digits = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
-    if value == "十":
-        return 10
-    if "十" in value:
-        before, after = value.split("十", 1)
-        if (not before or before in digits) and (not after or after in digits):
-            return digits.get(before, 1) * 10 + digits.get(after, 0)
-    return digits.get(value)
+def time_excerpt(text: str) -> str:
+    """Retain only time evidence, without copying attendance or signup rules."""
+    tokens = sorted((match.start(), match.end(), match.group(0).strip())
+                    for pattern in (_DATE, _RELATIVE, _TIME, _WEEKDAY)
+                    for match in pattern.finditer(text))
+    return " / ".join(value for _, _, value in tokens)[:400]
+
+
+def lecture_summary(text: str, title: str | None) -> tuple[str, str | None]:
+    """Extract up to two content sentences; never add facts or signup status."""
+    details = []
+    in_content = False
+    for line in _field_lines(text).splitlines():
+        labelled = _SUMMARY_LABEL.search(line)
+        value = labelled.group(1) if labelled else line.strip()
+        if labelled:
+            in_content = True
+        elif not value or _FIELD_BOUNDARY.search(line):
+            in_content = False
+        if not labelled and not in_content and not re.match(r"^(?:本次|本场|此次)(?:讲座|报告)(?:将|主要|围绕|聚焦|介绍|探讨|分享)", value):
+            continue
+        for sentence in re.split(r"(?<=[。！？])", value):
+            sentence = sentence.strip()
+            if not sentence or re.search(r"签到|签退|到场|到达|名单|报名|盖章|院章|主讲|地点|截止", sentence):
+                continue
+            details.append(sentence)
+    details = _unique(details)[:2]
+    heading = f"讲座《{title}》" if title else "讲座通知（主题待核实）"
+    detail = "".join(details)
+    if len(detail) > 220:
+        detail = detail[:220] + "…"
+    return heading + (f"：{detail}" if detail else "。"), detail or None
 
 
 def _clean(value: str) -> str:
@@ -206,10 +227,10 @@ def _candidate(message: dict[str, Any], text: str, *, lead: str | None = None) -
     if lead is None and not (has_lecture and (announcement or is_update)):
         return None
 
-    base, base_reason = _base_time(message.get("sent_at"))
+    base, _ = _base_time(message.get("sent_at"))
     reasons: list[str] = [lead] if lead else []
-    if base_reason:
-        reasons.append(base_reason)
+    # A full absolute date needs no original sending timestamp. Relative dates
+    # and missing years still fail conservatively in _dates().
     evidence: dict[str, str] = {}
     if title_evidence:
         evidence["title"] = title_evidence
@@ -217,14 +238,14 @@ def _candidate(message: dict[str, Any], text: str, *, lead: str | None = None) -
         reasons.append("未能确定讲座主题")
     candidate: dict[str, Any] = {
         "title": title,
+        "summary": lecture_summary(analysis_text, title)[0],
+        "analysis_policy": ANALYSIS_POLICY,
         "category": "lecture_update" if is_update else "lecture",
         "start_at": None,
         "end_at": None,
-        "arrival_at": None,
-        "location": None,
-        "speakers": [],
         "deadline_at": None,
-        "requirements": [],
+        "deadline_text": "",
+        "activity_time_text": "",
         "confidence": 0.0,
         "needs_review": True,
         "schedule_ready": False,
@@ -244,22 +265,30 @@ def _candidate(message: dict[str, Any], text: str, *, lead: str | None = None) -
         names = [str(item.get("name", "")).strip() for item in attachments if item.get("name")]
         if names:
             evidence["attachments"] = "\n".join(names)
-            candidate["requirements"] = [f"附件待人工核对：{name}" for name in names]
-            if any("名单" in name for name in names):
-                candidate["requirements"].append("需人工核对附件名单是否包含本人；当前无法确认报名资格")
+        candidate["summary"] = f"{candidate['summary']}正文未读取，待核实。"
         candidate["review_reasons"] = _unique(reasons)
         candidate["confidence"] = 0.15
         return candidate
 
+    _, summary_detail = lecture_summary(analysis_text, title)
+    if summary_detail:
+        evidence["summary"] = summary_detail
+
     event_lines: list[str] = []
     deadline_lines: list[str] = []
-    for line in analysis_text.splitlines():
-        (deadline_lines if _DEADLINE.search(line) else event_lines).append(line)
+    for line in re.split(r"\n|(?<=[，。；;])(?=\s*(?:请于|报名|预约|登记|截止|截至))", analysis_text):
+        # A prohibition on cancelling a registration and a check-in cutoff
+        # are not registration deadlines.
+        if _DEADLINE.search(line) and not re.search(r"取消报名|签到|签退", line):
+            deadline_lines.append(line)
+        elif not re.search(r"签到|签退|提前.{0,12}(?:到场|到达)|报名时间|报名期限", line):
+            event_lines.append(line)
     event_text = "\n".join(event_lines)
     labelled_time_lines = [line for line in event_lines if _EVENT_TIME_LINE.search(line)]
     # The signature date and registration-policy dates are not event dates.
     # Keep every labelled time line so competing schedules remain ambiguous.
     schedule_text = "\n".join(labelled_time_lines) if labelled_time_lines else event_text
+    candidate["activity_time_text"] = time_excerpt(schedule_text)
     found_dates, date_reasons = _dates(schedule_text, base)
     found_times, time_reasons = _times(schedule_text)
     reasons.extend(date_reasons + time_reasons)
@@ -296,69 +325,40 @@ def _candidate(message: dict[str, Any], text: str, *, lead: str | None = None) -
             if ("日" if weekday == "天" else weekday) != expected:
                 reasons.append("日期与文字中的星期不一致")
                 schedule_issues = True
-        arrival = _ARRIVAL.search(event_text)
-        if arrival:
-            minutes = _number(arrival.group(1))
-            if minutes is not None and 0 < minutes <= 240:
-                candidate["arrival_at"] = _iso(start - timedelta(minutes=minutes))
-                evidence["arrival_at"] = arrival.group(0)
-            else:
-                reasons.append("提前到场时长无法可靠识别")
-    location = _LOCATION.search(analysis_text)
-    if location:
-        candidate["location"] = location.group(1).splitlines()[0].strip().rstrip("。；;")
-        evidence["location"] = location.group(0).splitlines()[0]
-    elif candidate["status"] != "cancelled":
-        reasons.append("缺少可确定的活动地点")
-    speakers = _SPEAKERS.search(analysis_text)
-    if speakers:
-        names = speakers.group(1).splitlines()[0].strip()
-        candidate["speakers"] = [part.strip() for part in re.split(r"[、，,；;]|\s+(?:和|与)\s+|\s{2,}", names) if part.strip()]
-        evidence["speakers"] = speakers.group(0).splitlines()[0]
 
     deadline_text = "\n".join(deadline_lines)
+    candidate["deadline_text"] = time_excerpt(deadline_text) or ("截止日期和时刻未注明" if deadline_text else "")
     if deadline_text:
         deadline_dates, deadline_date_reasons = _dates(deadline_text, base)
         deadline_times, deadline_time_reasons = _times(deadline_text)
         reasons.extend(deadline_date_reasons + deadline_time_reasons)
         days = _unique([day for day, _ in deadline_dates])
         clocks = _unique([start for start, _, _ in deadline_times])
-        if len(days) == 1 and len(clocks) == 1:
+        # A same-day registration window states its cutoff at the range end.
+        if len(deadline_times) == 1 and deadline_times[0][1] and "报名时间" in deadline_text:
+            first, last, _ = deadline_times[0]
+            if last > first:
+                clocks = [last]
+            else:
+                deadline_time_reasons.append("报名时间范围结束不晚于开始")
+        if len(days) == 1 and len(clocks) == 1 and not (deadline_date_reasons or deadline_time_reasons):
             deadline = datetime.combine(days[0], datetime.min.time(), SHANGHAI).replace(hour=clocks[0][0], minute=clocks[0][1])
             candidate["deadline_at"] = _iso(deadline)
             evidence["deadline_at"] = deadline_text
         else:
             reasons.append("报名截止日期或时刻不完整或有歧义")
 
-    requirements: list[str] = []
-    for line in analysis_text.splitlines():
-        if re.search(r"提前.{0,12}(?:到|入场)|不可|不得|不能|必须|务必|签到|签退|缺席|报名|院章|学分|限额|名额", line):
-            requirements.append(line.strip())
-    requirement_evidence = list(requirements)
-    for item in attachments:
-        name = str(item.get("name", "")).strip()
-        if name:
-            requirement_evidence.append(name)
-            requirements.append(f"附件待人工核对：{name}")
-            if "名单" in name:
-                requirements.append("需人工核对附件名单是否包含本人；当前无法确认报名资格")
-                reasons.append("报名名单附件尚未核对，不能确认本人是否报名成功")
-        # Supplied extracted attachment text is evidence only; never treated as
-        # the current announcement or as proof of the user's own identity.
-    candidate["requirements"] = _unique(requirements)
-    if requirement_evidence:
-        evidence["requirements"] = "\n".join(_unique(requirement_evidence))
     if candidate["status"] == "cancelled":
         evidence["status"] = next((line.strip() for line in analysis_text.splitlines() if _CANCEL.search(_change_text(line))), text)
     reasons = _unique(reasons)
-    score = 0.25 + (0.2 if title else 0) + (0.25 if candidate["start_at"] else 0) + (0.15 if candidate["location"] else 0) + (0.1 if candidate["speakers"] else 0)
+    score = 0.3 + (0.25 if title else 0) + (0.3 if candidate["start_at"] else 0) + (0.1 if candidate["deadline_at"] else 0)
     candidate["confidence"] = round(max(0.05, min(0.95, score - min(0.4, 0.08 * len(reasons)))), 2)
     candidate["review_reasons"] = reasons
     candidate["needs_review"] = bool(reasons)
     candidate["schedule_ready"] = bool(
         title and not schedule_issues and (
             candidate["status"] == "cancelled"
-            or (candidate["start_at"] and candidate["location"])
+            or candidate["start_at"]
         )
     )
     return candidate

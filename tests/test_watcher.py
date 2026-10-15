@@ -162,7 +162,10 @@ class ForwardWatcherTests(unittest.TestCase):
         self.assertEqual(len(first[0]["events"]), 1)
         self.assertEqual(second, [])
         event = self.store.events()[0]
-        self.assertEqual(event["arrival_at"], "2026-10-16T18:40:00+08:00")
+        self.assertEqual(event["start_at"], "2026-10-16T19:00:00+08:00")
+        self.assertNotIn("arrival_at", event)
+        reminders = [job for job in self.store.jobs() if job["reason"] == "reminder"]
+        self.assertEqual(reminders[-1]["due_at"], "2026-10-16T10:00:00+00:00")
         self.assertEqual(len(self.store.jobs()), 3)
         self.assertEqual(len(self.engine.dispatch(NOW)), 1)
 

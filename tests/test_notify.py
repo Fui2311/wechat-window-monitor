@@ -135,53 +135,54 @@ class SendEmailTests(unittest.TestCase):
 
 
 class FormatNotificationTests(unittest.TestCase):
-    def test_event_contains_arrival_requirements_and_source(self):
-        subject, body = format_notification(
-            {
-                "title": "《科研创新是如何炼成的》",
-                "start_at": "2026-10-17T14:30:00+08:00",
-                "end_at": "2026-10-17T16:30:00+08:00",
-                "arrival_at": "2026-10-17T14:15:00+08:00",
-                "location": "计算机学院东阶梯",
-                "speakers": ["葛仕明", "丁圣勇"],
-                "requirements": ["报名成功的同学不可无故缺席", "不可代签到、签退"],
-                "source_group": "2026级计算机研究生通知群",
-                "source_sender": "26-计科-黄苏婷",
-                "source_text": "讲座时间：2026年10月17日 14:30—16:30",
-                "version": 2,
-                "status": "active",
-            },
-            "reminder",
-        )
+    def test_body_contains_exactly_three_fields(self):
+        subject, body = format_notification({
+            "title": "科研创新", "summary": "讲座《科研创新》：介绍研究问题的发现方法。",
+            "start_at": "2026-10-17T14:30:00+08:00", "end_at": "2026-10-17T16:30:00+08:00",
+            "deadline_at": "2026-10-16T18:00:00+08:00", "schedule_ready": True,
+            "arrival_at": "2026-10-17T14:15:00+08:00", "location": "东阶梯",
+            "speakers": ["某专家"], "requirements": ["签到"], "source_text": "名单原文",
+        }, "reminder")
         self.assertIn("到时提醒", subject)
-        self.assertIn("建议到达：2026-10-17 14:15（北京时间）", body)
-        self.assertIn("不可代签到", body)
-        self.assertIn("来源群：2026级计算机研究生通知群", body)
-        self.assertIn("无法确认你是否报名成功或在名单内", body)
-        self.assertNotIn("你已报名成功", body)
+        self.assertEqual([line.split("：", 1)[0] for line in body.splitlines()],
+                         ["讲座摘要", "报名截止时间", "讲座活动时间"])
+        self.assertIn("研究问题的发现方法", body)
+        self.assertIn("2026-10-16 18:00", body)
+        self.assertIn("2026-10-17 14:30", body)
+        for irrelevant in ("14:15", "东阶梯", "某专家", "签到", "名单", "来源群", "发送者"):
+            self.assertNotIn(irrelevant, body)
 
-    def test_missing_fields_and_review_reason_remain_explicit(self):
-        subject, body = format_notification({"needs_review": True, "review_reasons": ["年份不明确"]}, "review")
+    def test_missing_times_are_explicit_and_never_invented(self):
+        subject, body = format_notification({}, "review")
         self.assertIn("未识别标题", subject)
-        self.assertIn("年份不明确", body)
-        self.assertIn("未识别活动开始时间", body)
-        self.assertIn("来源原文未提供", body)
+        self.assertIn("报名截止时间：未注明", body)
+        self.assertIn("讲座活动时间：未注明（待核实）", body)
+        self.assertNotIn("00:00", body)
 
-    def test_all_reason_types_and_cancellation(self):
+    def test_partial_times_keep_evidence_with_uncertainty(self):
+        _, body = format_notification({"title": "测试", "deadline_text": "10月16日",
+                                       "activity_time_text": "明天 / 14:30", "schedule_ready": False}, "review")
+        self.assertIn("报名截止时间：10月16日（待核实）", body)
+        self.assertIn("讲座活动时间：明天 / 14:30（待核实）", body)
+
+    def test_all_reasons_and_cancelled_time_are_clear(self):
         for reason in ("new", "update", "cancelled", "reminder", "review"):
-            subject, body = format_notification({}, reason)
+            subject, body = format_notification({"title": "测试", "start_at": "2026-10-17T14:30:00+08:00"}, reason)
             self.assertTrue(subject)
-            self.assertTrue(body)
+            self.assertEqual(len(body.splitlines()), 3)
             if reason == "cancelled":
-                self.assertIn("已取消", body)
+                self.assertIn("【已取消】", body)
+                self.assertIn("原定", body)
         with self.assertRaises(EmailConfigurationError):
             format_notification({}, "surprise")
 
-    def test_subject_is_one_line_and_evidence_is_bounded(self):
-        subject, body = format_notification({"title": "讲座\n变更", "source_text": "长" * 1500}, "update")
+    def test_source_and_summary_are_bounded_and_single_line(self):
+        subject, body = format_notification({"title": "讲座\n变更", "summary": "摘要\n" + "长" * 1500,
+                                           "source_text": "不应输出原文" * 1500}, "update")
         self.assertNotIn("\n", subject)
-        self.assertIn("截取摘要", body)
-        self.assertLess(body.count("长"), 1100)
+        self.assertEqual(len(body.splitlines()), 3)
+        self.assertLess(body.count("长"), 501)
+        self.assertNotIn("不应输出原文", body)
 
 
 if __name__ == "__main__":

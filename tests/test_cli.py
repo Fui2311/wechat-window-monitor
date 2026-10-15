@@ -1,4 +1,4 @@
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 import io
 import json
 from pathlib import Path
@@ -11,6 +11,17 @@ from wechat_tracker.store import Store
 
 
 class WatchCliTests(unittest.TestCase):
+    def test_reanalysis_refuses_live_database_even_with_db_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.toml"
+            config.write_text('group = "测试群"\ndata_dir = "state"\n', encoding="utf-8")
+            with patch("wechat_tracker.service.read_status", return_value={"running": True}), \
+                 patch("wechat_tracker.engine.Engine.rebuild_analysis") as rebuild, \
+                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(main(["--config", str(config), "--db", str(Path(directory) / "state/tracker.sqlite3"),
+                                       "rebuild-analysis"]), 2)
+            rebuild.assert_not_called()
+
     def test_tick_send_requires_local_or_environment_credentials_before_dispatch(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "config.toml"

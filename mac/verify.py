@@ -28,6 +28,9 @@ def replay(config, fixtures):
             assert len(store.events()) == 1 and len(store.jobs()) == 3
             delivery = engine.dispatch(now=now, send=False)
             assert delivery and all(row["status"] == "preview" for row in delivery)
+            assert all(len(row["body"].splitlines()) == 3 for row in delivery)
+            assert {job["due_at"] for job in store.jobs() if job["reason"] == "reminder"} == {
+                "2026-10-16T06:30:00+00:00", "2026-10-17T05:30:00+00:00"}
             return dict(events=1, jobs=3, duplicate_replay=True, smtp_sent=False)
         finally:
             store.close()

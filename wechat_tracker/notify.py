@@ -55,14 +55,6 @@ def _text(value: Any) -> str:
     return str(value).strip()
 
 
-def _items(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, (list, tuple)):
-        return [item for entry in value if (item := _text(entry))]
-    return [item] if (item := _text(value)) else []
-
-
 def _display_datetime(value: Any) -> str:
     if not value:
         return "未识别，请核对原文"
@@ -84,7 +76,7 @@ def _display_datetime(value: Any) -> str:
 
 
 def format_notification(event: dict, reason: str) -> tuple[str, str]:
-    """Return a Chinese subject/body without inferring personal signup status."""
+    """Return exactly three information fields; signup remains manual."""
     if not isinstance(event, dict):
         raise EmailConfigurationError("event 必须是对象。")
     if reason not in _REASONS:
@@ -94,67 +86,26 @@ def format_notification(event: dict, reason: str) -> tuple[str, str]:
     # Subjects must remain one line even when source-derived titles contain newlines.
     subject_title = " ".join(title.split())[:180]
     subject = f"[微信群通知·{_REASONS[reason]}] {subject_title}"
-    status = _text(event.get("status"))
-    if reason == "cancelled" or status == "cancelled":
-        status_label = "已取消，请核对原通知"
-    elif status in {"active", "scheduled", "confirmed"}:
-        status_label = "已识别活动，具体安排以原通知为准"
+    summary = " ".join((_text(event.get("summary")) or f"讲座《{title}》，内容未注明。").split())[:500]
+    cancelled = reason == "cancelled" or event.get("status") == "cancelled"
+    if cancelled:
+        summary = "【已取消】" + summary
+    elif reason == "update":
+        summary = "【通知更新】" + summary
+    elif reason == "review":
+        summary = "【待核实】" + summary
+    deadline = _display_datetime(event["deadline_at"]) if event.get("deadline_at") else (
+        " ".join(_text(event.get("deadline_text")).split())[:400] + "（待核实）" if event.get("deadline_text") else "未注明")
+    if event.get("start_at") and event.get("schedule_ready", not event.get("needs_review")):
+        activity = _display_datetime(event["start_at"])
+        if event.get("end_at"):
+            activity += " 至 " + _display_datetime(event["end_at"])
     else:
-        status_label = status or "待核实"
-
-    lines = [
-        f"通知类型：{_REASONS[reason]}",
-        f"主题：{title}",
-        f"状态：{status_label}",
-        f"开始：{_display_datetime(event.get('start_at'))}",
-    ]
-    for key, label in (
-        ("end_at", "结束"),
-        ("arrival_at", "建议到达"),
-        ("deadline_at", "截止"),
-    ):
-        if event.get(key):
-            lines.append(f"{label}：{_display_datetime(event[key])}")
-    lines.append(f"地点：{_text(event.get('location')) or '未识别，请核对原文'}")
-    if speakers := _items(event.get("speakers")):
-        lines.append(f"主讲：{'、'.join(speakers)}")
-    if requirements := _items(event.get("requirements")):
-        lines.extend(["", "参与要求：", *(f"- {item}" for item in requirements)])
-
-    review_reasons = _items(event.get("review_reasons"))
-    if not event.get("start_at"):
-        review_reasons.append("未识别活动开始时间。")
-    if not event.get("location"):
-        review_reasons.append("未识别活动地点。")
-    if event.get("needs_review") and not review_reasons:
-        review_reasons.append("解析结果需要人工核实。")
-    if reason == "review" and not review_reasons:
-        review_reasons.append("本条通知被标记为待核实。")
-    lines.extend(["", "需要核实："])
-    if review_reasons:
-        lines.extend(f"- {item}" for item in dict.fromkeys(review_reasons))
-    else:
-        lines.append("- 暂无自动标记；具体安排仍请核对原通知。")
-    lines.append("- 无法确认你是否报名成功或在名单内；请核对群内原通知和名单附件。")
-
-    lines.extend(
-        [
-            "",
-            f"来源群：{_text(event.get('source_group')) or '未提供'}",
-            f"发送者：{_text(event.get('source_sender')) or '未提供'}",
-        ]
-    )
-    if event.get("version") is not None:
-        lines.append(f"记录版本：{event['version']}")
-    source = _text(event.get("source_text"))
-    if source:
-        evidence = source[:1000]
-        if len(source) > 1000:
-            evidence += "\n（原文较长，以上为截取摘要，请回群核对完整内容。）"
-        lines.extend(["", "来源原文摘录：", evidence])
-    else:
-        lines.extend(["", "来源原文未提供，以上内容需要回群核对。"])
-    return subject, "\n".join(lines)
+        activity = (" ".join(_text(event.get("activity_time_text")).split())[:400] + "（待核实）"
+                    if event.get("activity_time_text") else "未注明（待核实）")
+    if cancelled:
+        activity = "已取消；原定 " + activity if event.get("start_at") else "已取消"
+    return subject, f"讲座摘要：{summary}\n报名截止时间：{deadline}\n讲座活动时间：{activity}"
 
 
 def _env_value(config: dict, key: str) -> str:

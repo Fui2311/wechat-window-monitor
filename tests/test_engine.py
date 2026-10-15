@@ -43,8 +43,8 @@ class EngineTests(unittest.TestCase):
         result = self.engine.ingest(message, NOW)
         actual = result["events"][0]
         self.assertEqual(actual["start_at"], "2026-10-17T14:30:00+08:00")
-        self.assertEqual(actual["arrival_at"], "2026-10-17T14:15:00+08:00")
-        self.assertTrue(actual["needs_review"])  # Personal eligibility is still unknown.
+        self.assertNotIn("arrival_at", actual)
+        self.assertFalse(actual["needs_review"])
         self.assertTrue(actual["schedule_ready"])
         self.assertEqual(len(self.store.jobs()), 3)
 
@@ -55,10 +55,10 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(len(self.engine.dispatch(NOW)), 1)
         self.assertEqual(len(self.store.jobs()), 3)
 
-    def test_reminder_uses_arrival_and_does_not_replay_missed(self):
+    def test_reminder_uses_start_even_with_legacy_arrival_and_does_not_replay_missed(self):
         self.ingest()
         reminders = [j for j in self.store.jobs() if j["reason"] == "reminder"]
-        self.assertEqual([j["due_at"] for j in reminders], ["2026-10-16T06:15:00+00:00", "2026-10-17T05:15:00+00:00"])
+        self.assertEqual([j["due_at"] for j in reminders], ["2026-10-16T06:30:00+00:00", "2026-10-17T05:30:00+00:00"])
         with patch("wechat_tracker.engine.send_email") as send:
             self.engine.dispatch(parse_time("2026-10-18T00:00:00+08:00"), True)
         self.assertEqual(send.call_count, 1)  # new-event digest only, no stale imminent alarms
@@ -108,7 +108,7 @@ class EngineTests(unittest.TestCase):
         actual = self.ingest(event(category="lecture_update", start_at="2026-10-18T14:30:00+08:00",
                             end_at=None, arrival_at=None), "2")["events"][0]
         self.assertIsNone(actual["end_at"])
-        self.assertEqual(actual["arrival_at"], "2026-10-18T14:15:00+08:00")
+        self.assertNotIn("arrival_at", actual)
 
     def test_same_title_different_time_can_be_two_sessions(self):
         self.ingest()
@@ -138,10 +138,10 @@ class EngineTests(unittest.TestCase):
     def test_review_lead_does_not_pollute_confirmed_update_matching(self):
         original = self.ingest()["events"][0]
         self.ingest(event(needs_review=True, schedule_ready=False, category="lecture_update", source_text="不完整修改"), "2")
-        changed = self.ingest(event(location="新地点", category="lecture_update"), "3")["events"][0]
+        changed = self.ingest(event(deadline_at="2026-10-16T18:00:00+08:00", category="lecture_update"), "3")["events"][0]
         self.assertEqual(changed["id"], original["id"])
         self.assertEqual(changed["version"], 2)
-        self.assertEqual(changed["location"], "新地点")
+        self.assertEqual(changed["deadline_at"], "2026-10-16T18:00:00+08:00")
 
     def test_review_never_schedules(self):
         self.ingest(event(needs_review=True))
@@ -191,6 +191,43 @@ class EngineTests(unittest.TestCase):
                 self.assertEqual(len(reopened.jobs()), 3)
             finally:
                 reopened.close()
+
+    def test_irrelevant_changes_never_generate_update_mail(self):
+        self.ingest()
+        self.assertEqual(self.ingest(event(location="新地点", speakers=["新人"],
+                                          arrival_at="2026-10-17T14:00:00+08:00", requirements=["签到"]), "2")["events"], [])
+        self.assertEqual(len(self.store.jobs()), 3)
+
+    def test_reminder_between_old_arrival_and_start_is_still_valid(self):
+        self.ingest()
+        with patch("wechat_tracker.engine.send_email") as send:
+            result = self.engine.dispatch(parse_time("2026-10-17T14:20:00+08:00"), True)
+        self.assertTrue(any(job["reason"] == "reminder" and job["status"] == "sent" for job in result))
+
+    def test_deadline_is_displayed_without_an_extra_reminder(self):
+        self.ingest(event(deadline_at="2026-10-16T18:00:00+08:00"))
+        self.assertEqual(len(self.store.jobs()), 3)
+        self.assertIn("报名截止时间：2026-10-16 18:00", self.engine.dispatch(NOW)[0]["body"])
+
+    def test_summary_change_is_a_meaningful_update(self):
+        self.ingest(event(summary="讲座介绍研究设计。", evidence={"summary": "介绍研究设计。"}))
+        changed = self.ingest(event(summary="讲座介绍研究设计与绘图。", evidence={"summary": "介绍研究设计与绘图。"}), "2")["events"][0]
+        self.assertEqual(changed["version"], 2)
+
+    def test_calendar_has_no_attendance_or_venue(self):
+        self.ingest(event(summary="讲座摘要内容。", deadline_at="2026-10-16T18:00:00+08:00"))
+        data = export_ics(self.store.events()).replace("\r\n ", "")
+        self.assertIn("讲座摘要内容", data)
+        self.assertIn("报名截止时间", data)
+        self.assertNotIn("LOCATION:", data)
+        self.assertNotIn("到场", data)
+
+    def test_explicit_unresolved_cutoff_replaces_old_precise_cutoff(self):
+        self.ingest(event(deadline_at="2026-10-16T18:00:00+08:00", deadline_text="10月16日18:00"))
+        changed = self.ingest(event(deadline_at=None, deadline_text="10月17日", needs_review=True,
+                                   schedule_ready=True, category="lecture_update"), "2")["events"][0]
+        self.assertIsNone(changed["deadline_at"])
+        self.assertIn("10月17日（待核实）", self.engine.dispatch(NOW)[0]["body"])
 
 
 if __name__ == "__main__":

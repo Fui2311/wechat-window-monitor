@@ -1,6 +1,7 @@
 group = "2026级计算机研究生通知群"
 data_dir = "state"
 timezone = "Asia/Shanghai"
+# 活动开始前提醒；报名截止时间仅展示，不单独触发提醒。
 reminder_minutes = [1440, 60]
 max_attempts = 5
 

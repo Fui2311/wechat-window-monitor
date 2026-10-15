@@ -42,7 +42,7 @@ def main():
              ROOT / "wechat_tracker/resources/mac-capture.swift", "-o", executable])
         info = dict(CFBundleIdentifier="local.wechat-lecture-tracker.capture",
                     CFBundleName="WeChat Lecture Tracker Capture", CFBundleExecutable="wechat-capture",
-                    CFBundlePackageType="APPL", CFBundleShortVersionString="0.3.0",
+                    CFBundlePackageType="APPL", CFBundleShortVersionString="0.4.0",
                     CFBundleVersion="3", LSUIElement=True, LSMinimumSystemVersion="12.0")
         (contents / "Info.plist").write_bytes(plistlib.dumps(info))
         run(["/usr/bin/codesign", "--force", "--sign", "-", "--identifier", info["CFBundleIdentifier"], app])

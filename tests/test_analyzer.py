@@ -42,12 +42,9 @@ class AnalyzerTests(unittest.TestCase):
         self.assertEqual(item["title"], "科研创新是如何炼成的")
         self.assertEqual(item["start_at"], "2026-10-17T14:30:00+08:00")
         self.assertEqual(item["end_at"], "2026-10-17T16:30:00+08:00")
-        self.assertEqual(item["arrival_at"], "2026-10-17T14:15:00+08:00")
-        self.assertEqual(item["speakers"], ["葛仕明", "丁圣勇"])
-        self.assertEqual(item["location"], "计算机学院东阶梯")
+        self.assertEqual(item["summary"], "讲座《科研创新是如何炼成的》。")
         self.assertFalse(item["needs_review"])
         self.assertTrue(item["schedule_ready"])
-        self.assertIn("报名成功", "".join(item["requirements"]))
         self.assertEqual(item["source_message_id"], "m1")
 
     def test_fullwidth_time(self):
@@ -108,11 +105,11 @@ class AnalyzerTests(unittest.TestCase):
     def test_ordinary_chat_is_not_an_event(self):
         self.assertEqual(analyze_message(message("今天去听讲座吗？")), [])
 
-    def test_missing_location_is_reviewed(self):
+    def test_missing_location_does_not_block_activity(self):
         item, = analyze_message(message("讲座主题：《测试》\n时间：明天14:30"))
-        self.assertTrue(item["needs_review"])
-        self.assertIsNone(item["location"])
-        self.assertFalse(item["schedule_ready"])
+        self.assertFalse(item["needs_review"])
+        self.assertTrue(item["schedule_ready"])
+        self.assertEqual(item["start_at"], "2026-10-16T14:30:00+08:00")
 
     def test_forward_inherits_metadata(self):
         item, = analyze_message(message("聊天记录", kind="forward", children=[{"id": "child1", "text": SAMPLE, "kind": "text"}]))
@@ -163,8 +160,8 @@ class AnalyzerTests(unittest.TestCase):
 
     def test_attachment_does_not_establish_registration(self):
         item, = analyze_message(message(attachments=[{"kind": "file", "name": "《科研创新是如何炼成的》讲座报名成功名单.pdf", "text": "张三\n李四"}]))
-        self.assertTrue(item["needs_review"])
-        self.assertTrue(any("无法确认报名资格" in text for text in item["requirements"]))
+        self.assertFalse(item["needs_review"])
+        self.assertNotIn("报名成功", item["summary"])
         self.assertTrue(item["schedule_ready"])
 
     def test_attachment_without_body_is_review_lead(self):
@@ -172,12 +169,12 @@ class AnalyzerTests(unittest.TestCase):
         self.assertTrue(item["needs_review"])
         self.assertIsNone(item["start_at"])
         self.assertIn("讲座报名成功名单.pdf", item["evidence"]["attachments"])
-        self.assertTrue(any("无法确认报名资格" in text for text in item["requirements"]))
+        self.assertIn("正文未读取", item["summary"])
 
-    def test_full_date_with_unknown_message_time_is_reviewed(self):
+    def test_full_date_does_not_require_message_time(self):
         item, = analyze_message(message(sent_at=None))
         self.assertEqual(item["start_at"], "2026-10-17T14:30:00+08:00")
-        self.assertTrue(item["needs_review"])
+        self.assertFalse(item["needs_review"])
         self.assertTrue(item["schedule_ready"])
         self.assertIsNone(item["source_sent_at"])
 
@@ -215,17 +212,14 @@ class AnalyzerTests(unittest.TestCase):
             "text": body, "kind": "text", "sender": "转发内原始通知员", "sent_at": "2026-10-15T09:34:00+08:00",
         }]))
         self.assertEqual(item["title"], "“格物致新，问道前沿”学术科研板块之理论框架建构与绘图")
-        self.assertEqual(item["speakers"], ["余晖"])
         self.assertEqual(item["start_at"], "2026-10-16T19:00:00+08:00")
         self.assertEqual(item["end_at"], "2026-10-16T21:00:00+08:00")
-        self.assertEqual(item["arrival_at"], "2026-10-16T18:40:00+08:00")
-        self.assertEqual(item["location"], "石牌校园教育科学学院125会议厅")
         self.assertEqual(item["status"], "active")
         self.assertEqual(item["category"], "lecture")
         self.assertIsNone(item["deadline_at"])
         self.assertTrue(item["schedule_ready"])
         self.assertFalse(item["needs_review"], item["review_reasons"])
-        self.assertIn("不能取消报名", "".join(item["requirements"]))
+        self.assertNotIn("签到", item["summary"])
 
     def test_real_expanded_forward_body(self):
         self.assert_real_forward(REAL_FORWARD_BODY)
@@ -247,7 +241,7 @@ class AnalyzerTests(unittest.TestCase):
         item, = analyze_message(message(SAMPLE.replace("14:30-16:30", "下午2:30-4:30").replace("提前15分钟", "提前十五分钟")))
         self.assertEqual(item["start_at"], "2026-10-17T14:30:00+08:00")
         self.assertEqual(item["end_at"], "2026-10-17T16:30:00+08:00")
-        self.assertEqual(item["arrival_at"], "2026-10-17T14:15:00+08:00")
+        self.assertNotIn("arrival_at", item)
 
     def test_cross_midnight_not_invented(self):
         item, = analyze_message(message(SAMPLE.replace("14:30-16:30", "23:30-00:30")))
@@ -256,12 +250,57 @@ class AnalyzerTests(unittest.TestCase):
 
     def test_contract_has_all_fields(self):
         item, = analyze_message(message())
-        self.assertEqual(set(item), {"title", "category", "start_at", "end_at", "arrival_at", "location", "speakers", "deadline_at", "requirements", "confidence", "needs_review", "schedule_ready", "review_reasons", "evidence", "source_message_id", "source_group", "source_sender", "source_sent_at", "source_text", "status"})
+        self.assertEqual(set(item), {"title", "summary", "analysis_policy", "category", "start_at", "end_at", "deadline_at", "deadline_text", "activity_time_text", "confidence", "needs_review", "schedule_ready", "review_reasons", "evidence", "source_message_id", "source_group", "source_sender", "source_sent_at", "source_text", "status"})
         self.assertGreaterEqual(item["confidence"], 0)
         self.assertLessEqual(item["confidence"], 1)
 
     def test_non_dict_ignored(self):
         self.assertEqual(analyze_message(None), [])
+
+    def test_summary_extracts_content_without_attendance_or_signup(self):
+        item, = analyze_message(message(SAMPLE + "\n讲座简介：本报告介绍科研问题的发现方法。分享理论框架绘图实践。请报名成功的同学按时签到。"))
+        self.assertEqual(item["summary"], "讲座《科研创新是如何炼成的》：本报告介绍科研问题的发现方法。分享理论框架绘图实践。")
+        for field in ("location", "arrival_at", "speakers", "requirements"):
+            self.assertNotIn(field, item)
+
+    def test_three_field_notice_needs_no_other_information(self):
+        item, = analyze_message(message("讲座主题：《科研方法》\n讲座摘要：介绍问题发现与研究设计。\n报名截止：2026年10月16日18:00\n讲座时间：2026年10月17日14:30"))
+        self.assertTrue(item["schedule_ready"])
+        self.assertFalse(item["needs_review"])
+        self.assertEqual(item["deadline_at"], "2026-10-16T18:00:00+08:00")
+        self.assertIn("研究设计", item["summary"])
+
+    def test_date_only_and_relative_time_evidence_is_preserved(self):
+        item, = analyze_message(message("讲座主题：《科研方法》\n讲座时间：明天14:30\n报名截止：10月16日", sent_at=None))
+        self.assertIsNone(item["start_at"])
+        self.assertIsNone(item["deadline_at"])
+        self.assertIn("明天", item["activity_time_text"])
+        self.assertIn("10月16日", item["deadline_text"])
+
+    def test_invalid_deadline_does_not_accept_remaining_valid_fragments(self):
+        item, = analyze_message(message(SAMPLE + "\n报名截止：2026年2月30日或2026年10月16日18:00"))
+        self.assertIsNone(item["deadline_at"])
+        self.assertTrue(item["needs_review"])
+        self.assertTrue(item["schedule_ready"])
+
+    def test_registration_window_uses_end_not_start(self):
+        item, = analyze_message(message(SAMPLE + "\n报名时间：2026年10月16日09:00-18:00"))
+        self.assertEqual(item["deadline_at"], "2026-10-16T18:00:00+08:00")
+
+    def test_prose_deadline_and_activity_remain_separate(self):
+        item, = analyze_message(message("《科研方法》讲座将于2026年10月17日14:30举办，请于2026年10月16日18:00前报名。"))
+        self.assertEqual(item["start_at"], "2026-10-17T14:30:00+08:00")
+        self.assertEqual(item["deadline_at"], "2026-10-16T18:00:00+08:00")
+        self.assertTrue(item["schedule_ready"])
+
+    def test_multiline_content_stops_at_next_field(self):
+        item, = analyze_message(message("讲座主题：《科研方法》\n讲座简介：\n介绍研究问题的发现。\n分享绘图实践。\n讲座时间：2026年10月17日14:30\n地点：A楼"))
+        self.assertEqual(item["summary"], "讲座《科研方法》：介绍研究问题的发现。分享绘图实践。")
+
+    def test_checkin_cutoff_is_not_signup_deadline(self):
+        item, = analyze_message(message(SAMPLE + "\n签到截止时间：2026年10月17日14:30"))
+        self.assertIsNone(item["deadline_at"])
+        self.assertEqual(item["deadline_text"], "")
 
 
 if __name__ == "__main__":

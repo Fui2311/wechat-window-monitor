@@ -248,7 +248,7 @@ do {
         #else
         let architecture = "x86_64"
         #endif
-        emit(["ok": true, "version": "0.3.0", "architecture": architecture,
+        emit(["ok": true, "version": "0.4.0", "architecture": architecture,
               "os": ProcessInfo.processInfo.operatingSystemVersionString])
     } else if action == "authorize" {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary

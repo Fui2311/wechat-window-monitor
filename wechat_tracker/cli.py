@@ -47,6 +47,7 @@ def main(argv=None):
     forward.add_argument("--save", help="同时保存标准化的父子消息JSONL")
     sub.add_parser("events", help="列出已识别事件与待核实线索")
     sub.add_parser("outbox", help="查看待发任务、失败和版本")
+    sub.add_parser("rebuild-analysis", help="停止服务后备份并按当前方案重算尚未发信的数据库")
     tick = sub.add_parser("tick", help="预览或发送当前到期的邮件")
     tick.add_argument("--send", action="store_true", help="真实连接已配置SMTP并发送")
     tick.add_argument("--now", help="仅预览允许模拟时间")
@@ -116,7 +117,15 @@ def main(argv=None):
             from .credentials import apply_credentials
             if not apply_credentials(config):
                 raise ValueError("请先在本机运行 email setup 配置邮箱，或设置SMTP环境变量")
-        if args.command in ("ingest", "demo"):
+        if args.command == "rebuild-analysis":
+            from .service import read_status
+            if db.resolve() == (Path(config["data_dir"]) / "tracker.sqlite3").resolve() and read_status(config).get("running"):
+                raise ValueError("请先 service stop，再重算派生数据；完成后 service start --send")
+            backup = db.with_name(db.stem + ".before-reanalysis-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f") + ".sqlite3")
+            store.backup(backup)
+            result = engine.rebuild_analysis()
+            output(dict(result, backup=str(backup.resolve())))
+        elif args.command in ("ingest", "demo"):
             source = args.path if args.command == "ingest" else Path(__file__).resolve().parent / "resources" / "screenshot.jsonl"
             now = parse_time(args.now) if args.now else None
             for message in read_jsonl(source):

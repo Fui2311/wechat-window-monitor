@@ -17,16 +17,13 @@ def export_ics(events: list[dict]) -> str:
             continue
         lines.extend(["BEGIN:VEVENT", f"UID:{event['id']}@wechat-tracker.local",
                       f"DTSTAMP:{_stamp(event['updated_at'])}", f"SEQUENCE:{event['version']}",
-                      f"DTSTART:{_stamp(event['start_at'])}", f"SUMMARY:{_escape(event['title'])}",
-                      f"LOCATION:{_escape(event.get('location') or '待确认')}"])
+                      f"DTSTART:{_stamp(event['start_at'])}", f"SUMMARY:{_escape(event['title'])}"])
         if event.get("end_at"):
             lines.append(f"DTEND:{_stamp(event['end_at'])}")
         if event.get("status") == "cancelled":
             lines.append("STATUS:CANCELLED")
-        description = "来源群：" + event.get("source_group", "")
-        if event.get("arrival_at"):
-            description += "\n要求到场：" + event["arrival_at"]
-        description += "\n" + "\n".join(event.get("requirements", []))
+        description = "讲座摘要：" + (event.get("summary") or event["title"])
+        description += "\n报名截止时间：" + (event.get("deadline_at") or event.get("deadline_text") or "未注明")
         lines.extend([f"DESCRIPTION:{_escape(description)}", "END:VEVENT"])
     lines.append("END:VCALENDAR")
     # RFC 5545 folds physical lines at 75 UTF-8 octets without splitting characters.

@@ -4,7 +4,7 @@ import json
 import re
 import unicodedata
 
-from .analyzer import analyze_message
+from .analyzer import ANALYSIS_POLICY, analyze_message
 from .notify import format_notification, send_email
 from .store import Store
 
@@ -79,6 +79,45 @@ def validate_message(message: dict, expected_group: str, depth=0, budget=None):
 class Engine:
     def __init__(self, store: Store, config: dict):
         self.store, self.config = store, config
+        self._version_floors = {}
+
+    def rebuild_analysis(self, now: datetime | None = None) -> dict:
+        """Reparse an unsent database offline, retaining raw input and job audit.
+
+        The caller must stop the service and take a verified backup first.
+        Sent/in-flight mail needs a separately reviewed migration, never replay.
+        """
+        now = now or datetime.now(UTC)
+        if self.store.db.execute("SELECT 1 FROM outbox WHERE status IN ('sent','sending') LIMIT 1").fetchone():
+            raise ValueError("已有已发送或发送中记录，不能自动重放；需单独审核迁移")
+        old_events = self.store.events()
+        if all(e.get("analysis_policy") == ANALYSIS_POLICY for e in old_events) and all(
+            json.loads(j[0]).get("analysis_policy") == ANALYSIS_POLICY for j in self.store.db.execute(
+                "SELECT payload FROM outbox WHERE status='pending'")):
+            return {"changed": False, "events": len(old_events)}
+        messages = self.store.db.execute("SELECT payload,received_at FROM messages ORDER BY received_at,rowid").fetchall()
+        if old_events and not messages:
+            raise ValueError("缺少原始消息，不能安全重算旧活动")
+        self._version_floors = dict(self.store.db.execute(
+            "SELECT event_id,MAX(version) FROM outbox GROUP BY event_id").fetchall())
+        for event in old_events:
+            self._version_floors[event["id"]] = max(event["version"], self._version_floors.get(event["id"], 0))
+        try:
+            with self.store.db:
+                self.store.db.execute("UPDATE outbox SET status='superseded',claimed_at=NULL WHERE status='pending'")
+                self.store.db.execute("DELETE FROM events")
+                for row in messages:
+                    message = json.loads(row["payload"])
+                    validate_message(message, self.config["group"])
+                    for candidate in analyze_message(message):
+                        self._upsert(candidate, parse_time(row["received_at"]))
+                self.store.db.execute("UPDATE outbox SET status='expired' WHERE status='pending' AND reason='reminder' AND due_at<=?",
+                                      (utc_text(now),))
+        finally:
+            self._version_floors = {}
+        return {"changed": True, "messages": len(messages), "events": len(self.store.events()),
+                "pending": self.store.db.execute("SELECT COUNT(*) FROM outbox WHERE status='pending'").fetchone()[0],
+                "analysis_policy": ANALYSIS_POLICY}
 
     def ingest(self, message: dict, now: datetime | None = None) -> dict:
         now = now or datetime.now(UTC)
@@ -104,13 +143,16 @@ class Engine:
 
     def _upsert(self, candidate: dict, now: datetime) -> dict | None:
         candidate = dict(candidate)
+        candidate["analysis_policy"] = ANALYSIS_POLICY
+        for field in ("arrival_at", "location", "speakers", "requirements"):
+            candidate.pop(field, None)
         candidate.setdefault("needs_review", False)
         candidate.setdefault("review_reasons", [])
         candidate.setdefault("status", "active")
         if not candidate.get("title"):
             candidate.update(title="待核实讲座线索", needs_review=True)
         # Absolute event times are validated independently of extractor confidence.
-        for field in ("start_at", "end_at", "arrival_at", "deadline_at"):
+        for field in ("start_at", "end_at", "deadline_at"):
             if candidate.get(field):
                 try:
                     parse_time(candidate[field])
@@ -158,15 +200,19 @@ class Engine:
             for field, value in candidate.items():
                 if value not in (None, "", [], {}):
                     merged[field] = value
+            if not candidate.get("evidence", {}).get("summary") and old.get("summary"):
+                merged["summary"] = old["summary"]
+            if candidate.get("deadline_text"):
+                merged["deadline_at"] = candidate.get("deadline_at")
             if start and old.get("start_at") and parse_time(start) != parse_time(old["start_at"]):
-                # A new start does not authorize retaining an end/arrival on the old date.
+                # A new start does not authorize an end on the old date.
                 merged["end_at"] = candidate.get("end_at")
-                merged["arrival_at"] = candidate.get("arrival_at")
-                if not merged["arrival_at"] and old.get("arrival_at"):
-                    lead = parse_time(old["start_at"]) - parse_time(old["arrival_at"])
-                    merged["arrival_at"] = (parse_time(start) - lead).isoformat(timespec="seconds")
-            comparable = ("title", "start_at", "end_at", "arrival_at", "location", "speakers",
-                          "deadline_at", "requirements", "needs_review", "schedule_ready", "status")
+            comparable = ("title", "summary", "start_at", "end_at", "deadline_at",
+                          "needs_review", "schedule_ready", "status")
+            # A different unresolved cutoff is a meaningful update; equivalent
+            # spellings of a resolved absolute cutoff do not create extra mail.
+            if not merged.get("deadline_at") and merged.get("deadline_text") != old.get("deadline_text"):
+                comparable += ("deadline_text",)
             if all(merged.get(k) == old.get(k) for k in comparable):
                 return None
             event = merged
@@ -182,7 +228,7 @@ class Engine:
             existing = self.store.db.execute("SELECT payload FROM events WHERE id=?", (event_id,)).fetchone()
             if existing:
                 return None
-            version = 1
+            version = self._version_floors.get(event_id, 0) + 1
             reason = "review" if event["needs_review"] else "new"
         event.update(id=event_id, version=version, updated_at=utc_text(now))
         self.store.db.execute("INSERT OR REPLACE INTO events VALUES (?,?,?,?)",
@@ -192,8 +238,7 @@ class Engine:
                                   (event_id,))
         self._queue(event, reason, now)
         if schedule_ready(event) and event["status"] != "cancelled" and event.get("start_at"):
-            # Reminders refer to arrival when stated, otherwise to the lecture start.
-            anchor = parse_time(event.get("arrival_at") or event["start_at"])
+            anchor = parse_time(event["start_at"])
             for minutes in sorted(set(self.config.get("reminder_minutes", [1440, 60])), reverse=True):
                 due = anchor - timedelta(minutes=minutes)
                 if due > now:  # Avoid a burst of catch-up reminders for old announcements.
@@ -233,8 +278,11 @@ class Engine:
                         self.store.db.execute("UPDATE outbox SET status='coalesced' WHERE id=? AND status='pending'", (job["id"],))
                 continue
             event = json.loads(job["payload"])
-            # A suspended computer must not deliver a 'soon' reminder after arrival/start.
-            anchor = event.get("arrival_at") or event.get("start_at")
+            # Old unsent snapshots require an offline rebuild before delivery.
+            if event.get("analysis_policy") != ANALYSIS_POLICY:
+                continue
+            # A suspended computer must not deliver a 'soon' reminder after start.
+            anchor = event.get("start_at")
             if job["reason"] == "reminder" and anchor and parse_time(anchor) <= now:
                 if send:
                     with self.store.db:
