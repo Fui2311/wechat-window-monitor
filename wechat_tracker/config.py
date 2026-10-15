@@ -17,6 +17,18 @@ def load_config(path: str | Path) -> dict:
         raise ValueError("max_attempts 必须大于0")
     config["data_dir"] = str((path.parent / config.get("data_dir", "state")).resolve())
     config.setdefault("email", {})
-    config.setdefault("capture", {"source": "windows_uia"})
+    capture = config.setdefault("capture", {"source": "windows_uia"})
+    if not isinstance(capture, dict):
+        raise ValueError("capture必须是配置表")
+    if type(capture.get("auto_expand_forward", False)) is not bool:
+        raise ValueError("auto_expand_forward必须是布尔值")
+    for key, default, low, high in (("forward_max_cards", 3, 1, 10),
+                                   ("forward_max_pages", 5, 1, 20),
+                                   ("forward_idle_seconds", 3, 1, 60),
+                                   ("forward_partial_retry_seconds", 600, 60, 86400),
+                                   ("forward_timeout_seconds", 25, 1, 60)):
+        value = capture.get(key, default)
+        if type(value) is not int or not low <= value <= high:
+            raise ValueError(f"capture.{key}必须在{low}到{high}之间")
     return config
 

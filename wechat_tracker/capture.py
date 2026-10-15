@@ -64,23 +64,30 @@ def _run_uia(group: str, options: dict, *, mode: str) -> dict:
     executable = options.get("powershell") or shutil.which("powershell.exe") or shutil.which("pwsh.exe")
     if not executable:
         raise CaptureError("PowerShell is unavailable")
-    script = Path(__file__).resolve().parent / "resources" / "probe-weixin.ps1"
+    resource = "expand-weixin-forward.ps1" if mode == "expand" else "probe-weixin.ps1"
+    script = Path(__file__).resolve().parent / "resources" / resource
     command = [str(executable), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Group", group, "-Mode", mode]
     process_name = options.get("process_name", "Weixin")
     if not isinstance(process_name, str) or not process_name:
         raise CaptureError("capture.process_name must be a nonempty string")
     command.extend(["-ProcessName", process_name])
-    if mode == "forward":
+    if mode in {"forward", "expand"}:
         command.extend(["-ForwardWindowTitle", str(options.get("forward_window_title", ""))])
-        if options.get("forward_window_handle") is not None:
+        if mode == "forward" and options.get("forward_window_handle") is not None:
             command.extend(["-TargetWindowHandle", str(int(options["forward_window_handle"]))])
+    if mode == "expand":
+        command.extend(["-GroupWindowHandle", str(options["group_window_handle"]),
+                        "-TargetRuntimeId", ",".join(map(str, options["expand_runtime_id"])),
+                        "-ExpectedTextSha256", options["expand_expected_sha256"],
+                        "-MaxPages", str(options.get("forward_max_pages", 5)),
+                        "-IdleSeconds", str(options.get("forward_idle_seconds", 3))])
     if options.get("process_id") is not None:
         command.extend(["-TargetProcessId", str(int(options["process_id"]))])
     max_items = int(options.get("max_items", 200))
     if not 1 <= max_items <= 1000:
         raise CaptureError("capture.max_items must be between 1 and 1000")
     command.extend(["-MaxItems", str(max_items)])
-    timeout = float(options.get("timeout_seconds", 8))
+    timeout = float(options.get("forward_timeout_seconds", 25) if mode == "expand" else options.get("timeout_seconds", 8))
     if not 0 < timeout <= 60:
         raise CaptureError("capture.timeout_seconds must be greater than 0 and at most 60")
     try:
@@ -252,6 +259,63 @@ def read_forward(config: dict, parent_id: str, *, snapshot: dict | None = None) 
     return normalize_forward_snapshot(snapshot, config, parent_id)
 
 
+def expand_forward(config: dict, message: dict) -> dict:
+    """Open one freshly bound UIA card. The native driver verifies each action.
+
+    Default capture remains read-only; only an explicit watcher option calls this.
+    Generic already-open detail windows are never treated as a successful open.
+    """
+    group, options = _settings(config)
+    meta = message.get("source_meta", {})
+    if (message.get("group") != group or message.get("kind") != "forward"
+            or message.get("source") != "windows_uia" or not message.get("id")
+            or not isinstance(message.get("text"), str)):
+        raise CaptureError("Automatic expansion requires a captured card from the exact group")
+    runtime = meta.get("runtime_id")
+    if (not isinstance(runtime, list) or not runtime or
+            any(type(n) is not int for n in runtime) or
+            type(meta.get("window_handle")) is not int or meta["window_handle"] <= 0 or
+            type(meta.get("process_id")) is not int or meta["process_id"] <= 0):
+        raise CaptureError("Automatic expansion requires a current runtime id, window and process binding")
+    if not meta.get("fully_visible"):
+        raise CaptureError("forward_card_clipped: show the entire forward card before opening it")
+    if _classify(message["text"], meta.get("class_name", "")) != "forward":
+        raise CaptureError("The bound message is not a recognized merged-history card")
+    title = options.get("forward_window_title", "群聊的聊天记录")
+    if not isinstance(title, str) or not (title == "群聊的聊天记录" or re.fullmatch(r".+和.+的聊天记录", title)):
+        raise CaptureError("An exact supported forward_window_title is required")
+    text_hash = hashlib.sha256(message["text"].encode("utf-8")).hexdigest()
+    native_options = dict(options, group_window_handle=meta["window_handle"],
+                          process_id=meta["process_id"], expand_runtime_id=runtime,
+                          expand_expected_sha256=text_hash, forward_window_title=title)
+    result = _run_uia(group, native_options, mode="expand")
+    if result.get("ok") is not True or result.get("status") != "ready":
+        raise CaptureError(f"{result.get('status', 'uia_error')}: {result.get('error', 'forward expansion failed')}")
+    binding = result.get("binding", {})
+    if (binding.get("group_window_handle") != meta["window_handle"] or
+            binding.get("parent_runtime_id") != runtime or
+            binding.get("parent_text_sha256") != text_hash or
+            binding.get("new_window_observed") is not True or
+            binding.get("restored") is not True or
+            binding.get("detail_window_handle") != result.get("window_handle") or
+            result.get("process_id") != meta["process_id"]):
+        raise CaptureError("forward_binding_failed: native driver did not prove open/read/return linkage")
+    native_options.update(forward_parent_id=message["id"], forward_window_handle=result["window_handle"])
+    parent = normalize_forward_snapshot(result, dict(config, capture=native_options), message["id"])
+    parent.update(text=message["text"], sender=message.get("sender"), sent_at=message.get("sent_at"),
+                  source_group_verified=True)
+    parent["source_meta"].update(source_group_verified=True, identity_binding="verified_parent_open",
+                                  binding=binding, history_complete=result.get("history_complete") is True)
+    reasons = parent["source_meta"]["incomplete_reasons"]
+    if result.get("history_complete") is True:
+        reasons.remove("history_completeness_not_proven")
+    reasons.extend(result.get("incomplete_reasons", []))
+    parent["incomplete"] = bool(reasons)
+    for child in parent["children"]:
+        child["source_meta"].update(source_group_verified=True, identity_binding="verified_parent_open")
+    return parent
+
+
 def probe(config: dict) -> dict:
     """Return structured readiness diagnostics without leaking message bodies."""
     group: str | None = None
@@ -294,5 +358,5 @@ def capture_once(config: dict) -> list[dict]:
         key = (kind, text)
         ordinal = occurrence[key]
         occurrence[key] += 1
-        rows.append({"id": _fingerprint(group, kind, text, ordinal), "group": group, "sender": None, "sent_at": None, "text": text, "kind": kind, "observed_at": result["observed_at"], "source": "windows_uia", "source_meta": {"class_name": class_name, "runtime_id": item.get("runtime_id"), "fully_visible": item.get("fully_visible", False), "pending_expansion": kind != "text", "identity": "content fingerprint plus visible duplicate ordinal; not a Weixin message id"}})
+        rows.append({"id": _fingerprint(group, kind, text, ordinal), "group": group, "sender": None, "sent_at": None, "text": text, "kind": kind, "observed_at": result["observed_at"], "source": "windows_uia", "source_meta": {"class_name": class_name, "runtime_id": item.get("runtime_id"), "window_handle": result.get("window_handle"), "process_id": result.get("process_id"), "fully_visible": item.get("fully_visible", False), "pending_expansion": kind != "text", "identity": "content fingerprint plus visible duplicate ordinal; not a Weixin message id"}})
     return rows

@@ -34,6 +34,12 @@ class Store:
             CREATE TABLE IF NOT EXISTS capture_state (
                 group_name TEXT PRIMARY KEY, last_success_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS forward_reads (
+                group_name TEXT NOT NULL, parent_id TEXT NOT NULL,
+                status TEXT NOT NULL, payload TEXT, attempts INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at TEXT, last_error TEXT,
+                PRIMARY KEY (group_name, parent_id)
+            );
         """)
         self.db.commit()
 

@@ -191,6 +191,8 @@ public static class WeixinReadOnlyWindows {
         status = 'ready'
         source = 'windows_uia'
         group = $Group
+        window_handle = $windowHandle.ToInt64()
+        process_id = $root.Current.ProcessId
         observed_at = $observedAt
         message_count = $messages.Count
         diagnostics = [ordered]@{

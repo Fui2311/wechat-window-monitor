@@ -29,6 +29,15 @@ def digest(value) -> str:
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
+def stable_message(value):
+    """Observation metadata never changes the identity of nested evidence."""
+    if isinstance(value, dict):
+        return {k: stable_message(v) for k, v in value.items() if k not in ("observed_at", "source_meta")}
+    if isinstance(value, list):
+        return [stable_message(v) for v in value]
+    return value
+
+
 def title_key(value: str) -> str:
     return re.sub(r"[\W_]", "", unicodedata.normalize("NFKC", value)).lower()
 
@@ -76,7 +85,7 @@ class Engine:
         validate_message(message, self.config["group"])
         message = dict(message, group=self.config["group"])
         # Observation timestamps are transport metadata, never message identity.
-        stable = {k: v for k, v in message.items() if k not in ("observed_at", "source_meta")}
+        stable = stable_message(message)
         key = digest(stable)
         candidates = analyze_message(message)
         result = {"duplicate": False, "events": []}
@@ -267,7 +276,7 @@ class Engine:
         results = []
         for message in messages:
             validate_message(message, group)
-            stable = {k: v for k, v in message.items() if k not in ("observed_at", "source_meta")}
+            stable = stable_message(message)
             fingerprint = digest(stable)
             if self.store.db.execute("SELECT 1 FROM capture_seen WHERE group_name=? AND fingerprint=?", (group, fingerprint)).fetchone():
                 continue

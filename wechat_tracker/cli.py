@@ -55,6 +55,7 @@ def main(argv=None):
     watch.add_argument("--interval", type=int, default=15)
     watch.add_argument("--include-existing", action="store_true", help="首次捕获也分析现有可见消息")
     watch.add_argument("--send", action="store_true", help="真实发送邮件")
+    watch.add_argument("--expand-forward", action="store_true", help="允许打开已核对的转发卡片；需要目标群置前且用户空闲")
     calendar = sub.add_parser("calendar", help="导出确定日程的ICS（时间等有歧义的线索不导出）")
     calendar.add_argument("path")
     demo = sub.add_parser("demo", help="截图样例回放；使用独立demo.sqlite3，不真实发送")
@@ -118,11 +119,17 @@ def main(argv=None):
             if args.interval < 5:
                 raise ValueError("轮询间隔至少5秒")
             from .capture import capture_once
+            from .watcher import enrich_forwards
+            if args.expand_forward:
+                config["capture"]["auto_expand_forward"] = True
             while True:
                 try:
                     messages = capture_once(config)
+                    messages, forward_status = enrich_forwards(messages, store, config,
+                                                               include_existing=args.include_existing)
                     ingested = engine.capture_snapshot(messages, args.include_existing)
-                    output({"capture_ok": True, "observed_messages": len(messages), "ingested": ingested})
+                    output({"capture_ok": True, "observed_messages": len(messages),
+                            "forwards": forward_status, "ingested": ingested})
                 except Exception as error:
                     output({"capture_ok": False, "error_type": type(error).__name__, "error": str(error),
                             "notice": "本轮未捕获消息；请检查登录、指定独立群窗口及可见状态"})

@@ -16,3 +16,9 @@
 - 只读 UIA 找到精确群独立窗口 mmui::ChatSingleWindow，current_chat_name_label 与群名一致，chat_message_list 为唯一消息列表；能读取讲座全文与PDF卡片。
 - 消息节点无可靠发送者和日期，只有单独12:55标签，采集结果将保留 sent_at/sender=null，observed_at 仅为采集时间。
 - 首次轮询建立可见历史基线；显式 include-existing 可分析现有可见消息。UIA 只能观察可见窗口，不保证历史补全/锁屏接收。
+
+## 本轮接续验证（2026-10-15）
+- 重新确认精确群名独立窗口仍存在，UIA只读probe为ready；窗口句柄已变化，不能复用上轮句柄。
+- computer-use刷新到的控件仍为chat_message_list，输入框chat_input_field独立存在。当前视口先展示普通活动和文件，合并转发需在目标消息列表内定位。
+- GitHub私有同名仓库已建立，HTTPS推送成功；本机SMTP四项环境变量均未配置，真实邮箱投递需要本地配置。
+- 在精确目标群内定位到聊天记录卡片，实际可访问名称以“聊天记录群聊的聊天记录”连续开头，没有标题换行；单击该ListItem即新开唯一同进程“群聊的聊天记录”窗口。适配代码需支持这种名称，并避免双击。

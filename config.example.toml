@@ -8,6 +8,13 @@ max_attempts = 5
 source = "windows_uia"
 process_name = "Weixin"
 timeout_seconds = 8
+auto_expand_forward = false
+forward_window_title = "群聊的聊天记录"
+forward_max_cards = 3
+forward_max_pages = 5
+forward_idle_seconds = 3
+forward_timeout_seconds = 25
+forward_partial_retry_seconds = 600
 
 [email]
 smtp_host = "smtp.qq.com"
