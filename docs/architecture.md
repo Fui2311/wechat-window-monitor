@@ -24,6 +24,16 @@ flowchart LR
     I --> L[ICS导出]
 ```
 
+## 全天服务
+
+`MonitorService` 用 OS 单实例锁隔离数据目录，通过仅监听 localhost 的令牌控制连接提供状态/停止。Windows 交互用户计划任务以登录触发和每分钟检查恢复崩溃，`IgnoreNew` 阻止重复实例；显式 stop 暂停自动启动。原生 PowerShell 采集器常驻，UIA 事件只唤醒工作线程，15秒定期核对补充缺失的事件；Windows Job 使父进程崩溃后采集器退出。微信或群窗口出现后自动重绑。
+
+macOS 使用独立 Swift Accessibility 采集器和当前登录用户 LaunchAgent。精确群标题或显式核实的 header identifier 才能绑定，失败不回退其他聊天。该版本交付源码安装器，本机 Swift 编译和实际窗口适配尚待 Mac 验证。
+
+健康/有限日志、`capture_gaps` 和最后捕获时间提供可观测中断证据。`running` 仅证明控制实例在线，`monitoring` 仅证明最近一次已核对的视口可读，二者都不能证明零漏收。
+
+SQLite 启动先执行 integrity_check，使用 DELETE 回滚日志与 FULL 同步；服务每小时保存并校验 SQLite 快照，同时保留前一份。发现损坏时停止并保留证据，不自动清库重建。一次本机故障调查及恢复见[数据库可靠性记录](database-recovery.md)。QQ 邮箱凭据本机隐藏输入，Windows DPAPI 或 Mac Keychain 保存，服务缺凭据时只预览且不消耗重试。
+
 ## 采集层
 
 只允许配置中的精确群名。独立群窗口标题、内部群名标签、消息页、消息列表和行类型都匹配才接收。选择器变化时返回明确失败，不回退到其他聊天。

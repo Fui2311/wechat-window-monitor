@@ -20,7 +20,7 @@ def enrich_forwards(messages: list[dict], store: Store, config: dict, *,
     if first and not include_existing:
         with store.db:
             for message in messages:
-                if message.get("kind") == "forward" and message.get("source") == "windows_uia":
+                if message.get("kind") == "forward" and message.get("source") in {"windows_uia", "macos_ax"}:
                     store.db.execute("INSERT OR IGNORE INTO forward_reads VALUES (?,?,?,?,?,?,?)",
                                      (group, message["id"], "baseline", None, 0, None, None))
         return messages, []
@@ -28,7 +28,7 @@ def enrich_forwards(messages: list[dict], store: Store, config: dict, *,
     partial_retry = config["capture"].get("forward_partial_retry_seconds", 600)
     result, diagnostics, opened, interrupted = [], [], 0, False
     for message in messages:
-        if message.get("kind") != "forward" or message.get("children") or message.get("source") != "windows_uia":
+        if message.get("kind") != "forward" or message.get("children") or message.get("source") not in {"windows_uia", "macos_ax"}:
             result.append(message)
             continue
         cached = store.db.execute("SELECT * FROM forward_reads WHERE group_name=? AND parent_id=?",
@@ -45,7 +45,11 @@ def enrich_forwards(messages: list[dict], store: Store, config: dict, *,
         opened += 1
         attempts = cached["attempts"] if cached else 0
         try:
-            parent = expand_forward(config, message)
+            if message.get("source") == "macos_ax":
+                from .macos import expand_forward as mac_expand
+                parent = mac_expand(config, message)
+            else:
+                parent = expand_forward(config, message)
             validate_message(parent, group)
         except (CaptureError, ValueError) as error:
             attempts += 1

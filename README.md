@@ -2,7 +2,16 @@
 
 指定群：**2026级计算机研究生通知群**。本项目已实现 Python 本地框架：Windows 微信消息采集、合并转发子消息标准化、讲座信息提取、SQLite 去重与版本、邮件任务队列、到场前提醒、中文邮件预览和 ICS 导出。
 
-源码已连接私有仓库 [Fui2311/wechat_tracking](https://github.com/Fui2311/wechat_tracking)。当前为 `0.2.0`：新增可选的转发卡片自动展开驱动、重启缓存和失败退避。运行数据、SMTP凭据和本机配置不进入Git。
+源码已连接私有仓库 [Fui2311/wechat_tracking](https://github.com/Fui2311/wechat_tracking)。当前为 `0.3.0`：长驻采集、窗口就绪自动接入、用户会话服务与崩溃恢复、本机加密 QQ 邮箱配置，以及独立 macOS 源码安装包。运行数据、SMTP凭据和本机配置不进入Git。
+
+日常使用见 [Windows 服务管理](docs/service.md)，Mac 安装及后续实机验收见 [macOS 独立版本](docs/macos.md)。本机服务已部署；QQ 邮箱按用户选择稍后配置，目前只预览和排队。Mac 原生编译与运行待实机验证。
+
+```powershell
+python -m wechat_tracker --config config.local.toml service status
+python -m wechat_tracker --config config.local.toml service restart
+```
+
+也可双击 `scripts/restart-monitor.cmd`。保持微信登录、目标群独立窗口非最小化；登录任务会等待窗口就绪并自动绑定。只采集已加载视口，不能保证锁屏、未加载历史与突发大量消息的完整接收。
 
 ## 先看方案和复用结论
 
@@ -74,10 +83,12 @@ python -m wechat_tracker --db state/forward-demo.sqlite3 events
 
 ## 开启邮箱发送
 
-复制配置后修改 SMTP 主机、端口和加密方式；运行前按 [邮箱文档](docs/email.md) 在本机设置发件账号、SMTP 专用授权码、发件人和收件人环境变量。不要把授权码粘贴到聊天或写入源码。
+首次使用复制示例为 `config.local.toml`；已有本机配置时保留原文件。默认 QQ 邮箱 SSL 465，按 [邮箱文档](docs/email.md) 在本机隐藏输入授权码，测试成功后加密保存。不要把授权码粘贴到聊天或写入源码。
 
 ```powershell
 Copy-Item -LiteralPath config.example.toml -Destination config.local.toml
+python -m wechat_tracker --config config.local.toml email setup
+python -m wechat_tracker --config config.local.toml service install --send
 python -m wechat_tracker --config config.local.toml tick
 python -m wechat_tracker --config config.local.toml tick --send
 python -m wechat_tracker --config config.local.toml watch --interval 15 --send
@@ -100,5 +111,5 @@ python -m unittest discover -s tests -v
 - 目前不自动下载 PDF/XLSX、不识别图片正文、不证明本人是否报名成功；附件名只提供线索。
 - 自动逐卡展开是可选实验能力，尚需本机原生驱动端到端验收；嵌套详情遍历和主群全历史翻页尚未实现。
 - SQLite 和 `state/` 含本地消息内容，请保存在你自己的设备。邮件仅发送讲座摘要与最多1000字符来源摘录，不附带群文件。
-- 建议单个进程运行 `watch --send`。SMTP 已接受邮件但进程来不及记账时，恢复可能重复发送；这是至少一次投递的边界。
+- 全天运行使用 `service install --send`，不要另开 `watch --send` 发送同一数据库。SMTP 已接受邮件但进程来不及记账时，恢复可能重复发送；这是至少一次投递的边界。
 - ICS 是手动导出的文件，不是自动同步服务；取消事件保留同 UID 和更新版本，但再次导入的具体更新行为取决于日历应用。

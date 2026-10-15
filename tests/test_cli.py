@@ -11,6 +11,16 @@ from wechat_tracker.store import Store
 
 
 class WatchCliTests(unittest.TestCase):
+    def test_tick_send_requires_local_or_environment_credentials_before_dispatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.toml"
+            config.write_text('group = "2026级计算机研究生通知群"\ndata_dir = "state"\n', encoding="utf-8")
+            with patch("wechat_tracker.credentials.apply_credentials", return_value=False) as credentials, \
+                 patch("wechat_tracker.engine.send_email", side_effect=AssertionError("no SMTP calls")), \
+                 redirect_stdout(io.StringIO()), patch("sys.stderr", new_callable=io.StringIO):
+                self.assertEqual(main(["--config", str(config), "tick", "--send"]), 2)
+            credentials.assert_called_once()
+
     def test_jsonl_watch_once_imports_nested_lecture_and_repeat_does_not_duplicate(self):
         root = Path(__file__).resolve().parent.parent
         with tempfile.TemporaryDirectory() as directory:

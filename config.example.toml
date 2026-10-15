@@ -4,6 +4,13 @@ timezone = "Asia/Shanghai"
 reminder_minutes = [1440, 60]
 max_attempts = 5
 
+[service]
+resync_seconds = 15
+dispatch_seconds = 5
+worker_stale_seconds = 90
+include_existing = true
+prevent_sleep = true
+
 [capture]
 source = "windows_uia"
 process_name = "Weixin"

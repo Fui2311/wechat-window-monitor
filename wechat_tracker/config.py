@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import tomllib
 
 
@@ -15,7 +16,8 @@ def load_config(path: str | Path) -> dict:
         raise ValueError("reminder_minutes 必须是非负整数分钟列表")
     if type(config.get("max_attempts", 5)) is not int or config.get("max_attempts", 5) < 1:
         raise ValueError("max_attempts 必须大于0")
-    config["data_dir"] = str((path.parent / config.get("data_dir", "state")).resolve())
+    config["data_dir"] = str((path.parent / Path(os.path.expandvars(config.get("data_dir", "state"))).expanduser()).resolve())
+    config["config_path"] = str(path)
     config.setdefault("email", {})
     capture = config.setdefault("capture", {"source": "windows_uia"})
     if not isinstance(capture, dict):
@@ -30,5 +32,17 @@ def load_config(path: str | Path) -> dict:
         value = capture.get(key, default)
         if type(value) is not int or not low <= value <= high:
             raise ValueError(f"capture.{key}必须在{low}到{high}之间")
+    service = config.setdefault("service", {})
+    if not isinstance(service, dict):
+        raise ValueError("service必须是配置表")
+    for key, default, low, high in (("resync_seconds", 15, 2, 60),
+                                   ("dispatch_seconds", 5, 1, 60),
+                                   ("worker_stale_seconds", 90, 30, 300)):
+        value = service.get(key, default)
+        if type(value) is not int or not low <= value <= high:
+            raise ValueError(f"service.{key}必须在{low}到{high}之间")
+    for key in ("include_existing", "prevent_sleep"):
+        if type(service.get(key, True)) is not bool:
+            raise ValueError(f"service.{key}必须为布尔值")
     return config
 

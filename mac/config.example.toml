@@ -1,0 +1,32 @@
+group = "2026级计算机研究生通知群"
+data_dir = "state"
+timezone = "Asia/Shanghai"
+reminder_minutes = [1440, 60]
+max_attempts = 5
+
+[service]
+resync_seconds = 15
+dispatch_seconds = 5
+worker_stale_seconds = 90
+include_existing = true
+prevent_sleep = true
+
+[capture]
+source = "macos_ax"
+mac_helper = "__MAC_HELPER__"
+bundle_id = "com.tencent.xinWeChat"
+mac_header_identifier = ""
+mac_list_identifier = ""
+follow_tail = true
+auto_expand_forward = false
+forward_window_title = "群聊的聊天记录"
+forward_timeout_seconds = 25
+
+[email]
+smtp_host = "smtp.qq.com"
+smtp_port = 465
+smtp_security = "ssl"
+smtp_user_env = "WECHAT_SMTP_USER"
+smtp_password_env = "WECHAT_SMTP_PASSWORD"
+from_env = "WECHAT_EMAIL_FROM"
+to_env = "WECHAT_EMAIL_TO"

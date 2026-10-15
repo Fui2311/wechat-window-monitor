@@ -6,11 +6,14 @@ param(
     [string]$ProcessName = 'Weixin',
     [string]$ForwardWindowTitle = '',
     [long]$TargetWindowHandle = 0,
-    [ValidateRange(1, 1000)][int]$MaxItems = 200
+    [ValidateRange(1, 1000)][int]$MaxItems = 200,
+    [switch]$KeepAlive,
+    [switch]$FollowTail,
+    [ValidateRange(1, 40)][int]$TailSteps = 1
 )
 
-# Read-only UI Automation. This script never invokes, focuses, scrolls, types,
-# downloads files, or reads another conversation's control tree.
+# Default mode is read-only. Explicit FollowTail sends a wheel message only to
+# the verified group's native rendering child; no focus/keyboard/desktop input.
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 $observedAt = [DateTimeOffset]::UtcNow.ToString('o')
@@ -36,20 +39,31 @@ try {
     }
     Add-Type -AssemblyName UIAutomationClient
     Add-Type -AssemblyName UIAutomationTypes
-    Add-Type -TypeDefinition @'
+    if ($null -eq ('WeixinReadOnlyWindows' -as [type])) { Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
 public static class WeixinReadOnlyWindows {
+    [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+    [StructLayout(LayoutKind.Sequential)] struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
     public delegate bool EnumWindowsProc(IntPtr handle, IntPtr parameter);
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
+    [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc callback, IntPtr parameter);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr handle, StringBuilder text, int count);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr handle, StringBuilder text, int count);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr handle);
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr handle);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string className, string name);
+    [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SendMessageTimeout(IntPtr handle, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out UIntPtr result);
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO value);
+    public static uint LastInputTick() { var value = new LASTINPUTINFO(); value.cbSize=(uint)Marshal.SizeOf(value); if (!GetLastInputInfo(ref value)) throw new InvalidOperationException(); return value.dwTime; }
+    public static uint IdleMilliseconds() { return unchecked((uint)Environment.TickCount - LastInputTick()); }
 }
 '@
+    }
     $processes = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue)
     if ($TargetProcessId -gt 0) {
         $processes = @($processes | Where-Object { $_.Id -eq $TargetProcessId })
@@ -144,6 +158,49 @@ public static class WeixinReadOnlyWindows {
     if ($listRect.IsEmpty -or $listRect.Width -le 0 -or $listRect.Height -le 0) {
         Fail-Capture 'message_list_not_visible' 'The message list has no visible rectangle.'
     }
+    $nativeChildren = New-Object 'System.Collections.Generic.List[object]'
+    $nativeCallback = [WeixinReadOnlyWindows+EnumWindowsProc] {
+        param([IntPtr]$childHandle, [IntPtr]$unused)
+        $classText = New-Object System.Text.StringBuilder 256
+        [void][WeixinReadOnlyWindows]::GetClassName($childHandle, $classText, $classText.Capacity)
+        $nativeChildren.Add([pscustomobject]@{ handle=$childHandle.ToInt64(); class_name=$classText.ToString() })
+        return $nativeChildren.Count -lt 32
+    }
+    [void][WeixinReadOnlyWindows]::EnumChildWindows($windowHandle, $nativeCallback, [IntPtr]::Zero)
+    $tailRequested = $false
+    if ($FollowTail -and $Mode -eq 'capture' -and [WeixinReadOnlyWindows]::IdleMilliseconds() -ge 3000) {
+        $renderCandidates = @($nativeChildren | Where-Object { $_.class_name -ceq 'MMUIRenderSubWindowHW' })
+        if ($renderCandidates.Count -ne 1) { Fail-Capture 'tail_control_unavailable' 'Expected one verified native rendering descendant in the target group.' }
+        $render = [IntPtr]$renderCandidates[0].handle
+        [uint32]$renderProcessId = 0
+        [void][WeixinReadOnlyWindows]::GetWindowThreadProcessId($render, [ref]$renderProcessId)
+        if ($renderProcessId -ne $root.Current.ProcessId) { Fail-Capture 'tail_control_mismatch' 'The rendering child belongs to another process.' }
+        $pointX = [int]($listRect.Left + $listRect.Width / 2)
+        $pointY = [int]($listRect.Top + $listRect.Height / 2)
+        $point = [long](($pointY -band 0xffff) -shl 16) -bor ($pointX -band 0xffff)
+        $wheel = [long](0x8008 -shl 16) # signed delta -32760, confined to this window
+        [UIntPtr]$sent = [UIntPtr]::Zero
+        $oldPoint = New-Object WeixinReadOnlyWindows+POINT
+        [void][WeixinReadOnlyWindows]::GetCursorPos([ref]$oldPoint)
+        [void][WeixinReadOnlyWindows]::SetCursorPos($pointX, $pointY)
+        $inputTick = [WeixinReadOnlyWindows]::LastInputTick()
+        try {
+            for ($step=0; $step -lt $TailSteps; $step++) {
+                if ([WeixinReadOnlyWindows]::LastInputTick() -ne $inputTick) { break }
+                $delivered = [WeixinReadOnlyWindows]::SendMessageTimeout($render, 0x020A, [IntPtr]$wheel, [IntPtr]$point, 2, 500, [ref]$sent)
+                if ($delivered -eq [IntPtr]::Zero) { Fail-Capture 'tail_control_timeout' 'The group did not accept its bounded tail-follow message.' }
+                Start-Sleep -Milliseconds 15
+            }
+            $tailRequested = $true
+            Start-Sleep -Milliseconds 120
+        } finally {
+            $currentPoint = New-Object WeixinReadOnlyWindows+POINT
+            [void][WeixinReadOnlyWindows]::GetCursorPos([ref]$currentPoint)
+            if ([WeixinReadOnlyWindows]::LastInputTick() -eq $inputTick -and $currentPoint.X -eq $pointX -and $currentPoint.Y -eq $pointY) {
+                [void][WeixinReadOnlyWindows]::SetCursorPos($oldPoint.X, $oldPoint.Y)
+            }
+        }
+    }
     $children = $list.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
     if ($children.Count -gt $MaxItems) {
         Fail-Capture 'too_many_items' 'The message list exceeds the configured safe snapshot size.'
@@ -186,6 +243,14 @@ public static class WeixinReadOnlyWindows {
     if ($root.Current.Name -cne $Group -or $titles[0].Current.Name -cne $Group) {
         Fail-Capture 'group_changed_during_read' 'The group identity changed during the snapshot.'
     }
+    $scrollPattern = $null
+    $hasScrollPattern = $list.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern, [ref]$scrollPattern)
+    $scrollPercent = $null
+    $atTail = $null
+    if ($hasScrollPattern) {
+        $scrollPercent = $scrollPattern.Current.VerticalScrollPercent
+        $atTail = (-not $scrollPattern.Current.VerticallyScrollable -or $scrollPercent -ge 99.9)
+    }
     $result = [ordered]@{
         ok = $true
         status = 'ready'
@@ -204,6 +269,14 @@ public static class WeixinReadOnlyWindows {
             sender_available = $false
             sent_at_available = $false
             scope = 'loaded viewport-intersecting rows only'
+            scroll_pattern_available = $hasScrollPattern
+            vertical_scroll_percent = $scrollPercent
+            at_tail = $atTail
+            tail_follow_requested = $tailRequested
+            tail_follow_steps = $(if ($tailRequested) { $TailSteps } else { 0 })
+            native_children = $nativeChildren.ToArray()
+            list_patterns = @($list.GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName })
+            last_row_patterns = $(if ($children.Count -gt 0) { @($children[$children.Count - 1].GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName }) } else { @() })
         }
     }
     if ($Mode -eq 'capture') { $result['messages'] = $messages.ToArray() }
@@ -216,5 +289,5 @@ public static class WeixinReadOnlyWindows {
         $reason = $Matches[2]
     }
     Emit-Result ([ordered]@{ ok = $false; status = $code; source = 'windows_uia'; group = $Group; observed_at = $observedAt; error = $reason })
-    exit 1
+    if (-not $KeepAlive) { exit 1 }
 }

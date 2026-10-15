@@ -325,6 +325,9 @@ def probe(config: dict) -> dict:
         if source == "jsonl":
             rows = _read_jsonl(group, options)
             return {"ok": True, "status": "ready", "source": source, "group": group, "message_count": len(rows), "observed_at": _now()}
+        if source == "macos_ax":
+            from .macos import probe as mac_probe
+            return mac_probe(config)
         if source != "windows_uia":
             raise CaptureError(f"Unsupported capture source: {source}")
         return _run_uia(group, options, mode="probe")
@@ -338,11 +341,22 @@ def capture_once(config: dict) -> list[dict]:
     source = options.get("source", "windows_uia")
     if source == "jsonl":
         return _read_jsonl(group, options)
+    if source == "macos_ax":
+        from .macos import capture_once as mac_capture
+        return mac_capture(config)
     if source != "windows_uia":
         raise CaptureError(f"Unsupported capture source: {source}")
     result = _run_uia(group, options, mode="capture")
+    return normalize_uia_snapshot(result, config)
+
+
+def normalize_uia_snapshot(result: dict, config: dict) -> list[dict]:
+    """Validate a native frame independently of one-shot or persistent transport."""
+    group, options = _settings(config)
     if result.get("ok") is not True or result.get("status") != "ready":
         raise CaptureError(f"{result.get('status', 'uia_error')}: {result.get('error', 'UIA source not ready')}")
+    if result.get("group") != group:
+        raise CaptureError("UIA frame does not match the exact configured group")
     if not isinstance(result.get("observed_at"), str) or not isinstance(result.get("messages"), list):
         raise CaptureError("UIA probe returned an incomplete snapshot")
     occurrence: Counter[tuple[str, str]] = Counter()

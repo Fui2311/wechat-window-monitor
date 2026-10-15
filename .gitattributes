@@ -3,4 +3,7 @@
 *.md text eol=lf
 *.toml text eol=lf
 *.jsonl text eol=lf
+*.swift text eol=lf
+*.command text eol=lf
 *.ps1 text eol=crlf
+*.cmd text eol=crlf

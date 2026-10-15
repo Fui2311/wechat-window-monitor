@@ -60,10 +60,49 @@ def main(argv=None):
     calendar.add_argument("path")
     demo = sub.add_parser("demo", help="截图样例回放；使用独立demo.sqlite3，不真实发送")
     demo.add_argument("--now", default="2026-10-15T13:00:00+08:00")
+    service = sub.add_parser("service", help="全天常驻监控的启动、停止、重启、状态和登录自启动")
+    service.add_argument("action", choices=["run", "start", "stop", "restart", "status", "install", "uninstall"])
+    service.add_argument("--send", action="store_true", help="开启真实SMTP发送")
+    service.add_argument("--run-seconds", type=int, help=argparse.SUPPRESS)
+    email = sub.add_parser("email", help="本机加密配置SMTP并发送测试邮件")
+    email.add_argument("action", choices=["setup", "status"])
     args = parser.parse_args(argv)
     store = None
     try:
         config = load_config(args.config)
+        if args.command == "email":
+            from .credentials import apply_credentials, configure_email
+            output(configure_email(config) if args.action == "setup" else {"configured": apply_credentials(config)})
+            return 0
+        if args.command == "service":
+            if args.db:
+                raise ValueError("service使用配置中的data_dir；请使用独立配置隔离数据，不能使用--db")
+            from .service import MonitorService, read_status, start_service, stop_service
+            from .autostart import manage_startup
+            if args.action == "run":
+                result = MonitorService(config, send=args.send).run(run_seconds=args.run_seconds)
+            elif args.action == "status":
+                result = read_status(config)
+            elif args.action == "stop":
+                manage_startup(args.config, config, "pause")
+                result = stop_service(config)
+            elif args.action in {"start", "restart"}:
+                if args.action == "restart":
+                    manage_startup(args.config, config, "pause")
+                    stop_service(config)
+                result = start_service(args.config, config, args.send)
+            elif args.action == "install":
+                manage_startup(args.config, config, "pause")
+                stop_service(config)
+                startup = manage_startup(args.config, config, "install", send=args.send)
+                result = start_service(args.config, config, args.send)
+                result["startup"] = startup
+            else:
+                result = manage_startup(args.config, config, "uninstall")
+                stop_service(config)
+            result.pop("control_token", None)
+            output(result)
+            return 0
         if args.command == "probe":
             from .capture import probe
             result = probe(config)
@@ -73,6 +112,10 @@ def main(argv=None):
             "demo.sqlite3" if args.command == "demo" else "tracker.sqlite3")
         store = Store(db)
         engine = Engine(store, config)
+        if args.command in {"tick", "watch"} and args.send:
+            from .credentials import apply_credentials
+            if not apply_credentials(config):
+                raise ValueError("请先在本机运行 email setup 配置邮箱，或设置SMTP环境变量")
         if args.command in ("ingest", "demo"):
             source = args.path if args.command == "ingest" else Path(__file__).resolve().parent / "resources" / "screenshot.jsonl"
             now = parse_time(args.now) if args.now else None
@@ -143,7 +186,7 @@ def main(argv=None):
                     break
                 time.sleep(args.interval)
         return 0
-    except (ValueError, OSError, KeyError, CaptureError) as error:
+    except (ValueError, OSError, KeyError, CaptureError, RuntimeError) as error:
         print(f"错误：{error}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:

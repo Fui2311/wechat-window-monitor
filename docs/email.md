@@ -2,6 +2,21 @@
 
 通知模块只通过校验证书的 TLS 发送文本邮件，不读取或发送群文件。测试和本地预览不会发送邮件；是否发送由运行入口的显式发送选项决定。
 
+## QQ 邮箱本机配置
+
+当前服务默认 `smtp.qq.com`、SSL、465。用户已选择稍后配置，在此之前保持预览和排队，不消耗 SMTP 重试。
+
+```powershell
+python -m wechat_tracker --config config.local.toml email setup
+python -m wechat_tracker --config config.local.toml email status
+```
+
+也可运行 `scripts/configure-email.ps1` 打开本机交互流程。发件邮箱、收件邮箱和 SMTP 授权码只在本机填写，授权码隐藏输入；启用 QQ 邮箱 SMTP 后使用其授权码，不使用 QQ 登录密码。配置流程会先发一封明确的测试邮件，成功才保存。Windows 使用当前账户 DPAPI 加密到数据目录，macOS 使用当前用户 Keychain；不要跨机器拷贝凭据文件。服务每5秒重新检查配置，配置成功后无需重启。
+
+`--send` 与凭据同时就绪才会外发。已安装任务的发送模式以安装参数为准；需变更时重新 `service install --send`（或不带 `--send` 仅预览）。`tick/watch --send` 与常驻服务均可加载本机加密凭据，也支持下面的进程环境变量入口。
+
+## 环境变量入口
+
 配置示例（仅使用占位 SMTP 主机和环境变量名）：
 
 ```json
