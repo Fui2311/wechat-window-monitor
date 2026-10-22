@@ -2,7 +2,9 @@
 
 按**精确名称**监控微信会话窗口，用你自己的目标识别重要消息。支持群聊、私聊及符合原生消息列表结构的其他会话；不再附带讲座、校区、报名等专属策略。
 
-**正式版本：2.0.0 · Python 3.11+ · 本地 Dashboard · 双识别核心。**
+**当前版本：2.0.0 · Python 3.11+ · 本地 Dashboard · 双识别核心。**
+
+本机验收预发布；跨平台 Actions 当前受账户计费限制，详见 [验收报告](docs/generic/VALIDATION.md)。
 
 ![合成数据验收中的多窗口 Dashboard](docs/generic/assets/dashboard.png)
 

@@ -17,7 +17,7 @@ FIELDS = {
     "wechat_tracker/resources/web/index.html": [r'(微信群讲座消息捕获与邮箱通知 · )' + VERSION + r'(</span>)'],
     "wechat_tracker/resources/mac-capture.swift": [r'("version": ")' + VERSION + r'(")'],
     "mac/build-console-launcher.py": [r'("CFBundleShortVersionString": ")' + VERSION + r'(")'],
-    "README.md": [r'(\*\*正式版本：)' + VERSION + r'( · Python)'],
+    "README.md": [r'(\*\*当前版本：)' + VERSION + r'( · Python)'],
     "docs/deployment.md": [r'(部署、升级与发布（)' + VERSION + r'(）)',
                            r'(wechat_window_monitor-)' + VERSION + r'(-py3-none-any.whl)'],
     "docs/architecture.md": [r'(架构与扩展契约（)' + VERSION + r'(）)'],
