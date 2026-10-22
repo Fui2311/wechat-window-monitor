@@ -174,7 +174,7 @@ python scripts/check-release.py
 python scripts/build-mac-package.py
 ```
 
-`check-release.py` 在仓库外创建干净虚拟环境，从 wheel 安装后核对资源、配置初始化、样例去重、邮件预览、ICS 和 HTTP API，禁止调用微信、LLM 或 SMTP。CI 在 Linux、macOS、Windows 运行 Python 回归，并单独运行异步前端状态回归；另检查源码分发包可重新构建及 Mac 安装 ZIP 的清单。桌面窗口、权限、转发和 SMTP 实际送达需要在目标机器单独验收，CI 成功不代表这些物理条件已经满足。
+`check-release.py` 在仓库外创建干净虚拟环境，从 wheel 安装后核对资源、配置初始化、样例去重、邮件预览、ICS 和 HTTP API，禁止调用微信、LLM 或 SMTP。CI 对 PR 和 main 运行验证，功能分支 push 不再与 PR 重复触发。CI 在 Linux、macOS、Windows 运行 Python 回归，并单独运行异步前端状态回归；另检查源码分发包可重新构建及 Mac 安装 ZIP 的清单。桌面窗口、权限、转发和 SMTP 实际送达需要在目标机器单独验收，CI 成功不代表这些物理条件已经满足。
 
 开发和发布操作需要完整 Git 仓库；Mac ZIP 用于安装，不包含开发测试脚本。版本号以 `pyproject.toml` 为唯一来源，修改后运行 `python scripts/sync-version.py --write` 同步 Python、原生助手、界面及文档标签，再审查差异和运行验证。`--check` 只读检查，CI 和安装包冒烟会拒绝标签漂移；历史 CHANGELOG 不会被批量替换。
 

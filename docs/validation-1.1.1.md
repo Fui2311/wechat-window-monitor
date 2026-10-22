@@ -24,3 +24,5 @@
 - 源码浏览器中正常历史库保留、有效备份不再出现，备份与历史文件字节未变；最终1.1.1 wheel独立安装后重建相同夹具，实际页面再次确认正常历史可查看、备份不在下拉框中，导入位置为该环境site-packages。
 
 本轮没有升级或操作生产常驻监控，没有发送真实SMTP或微信。以上不代表真实桌面采集或邮箱送达验收。证据保存在本机忽略目录 state/ux-audit，包括 discovery-red.log、discovery-green.log、tests-isolated-discovery.log、smoke-1.1.1.log 和 wheel-discovery-1.1.1.png。
+
+Antigravity 的 Sonnet 有界静态核查已实际完成并落盘；Codex 核对后采纳发现深度、范围及符号链接说明，不把已证明正确的逻辑疑虑计为缺陷。详见 [集成审查](antigravity/2026-10-22-discovery-policy-integration-review.md)。
