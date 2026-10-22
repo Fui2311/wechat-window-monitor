@@ -136,7 +136,10 @@ class WebControlHandler(BaseHTTPRequestHandler):
         if not any(target == r or r in target.parents for r in allowed_roots):
             raise PermissionError("Access to database outside authorized directory is forbidden")
 
-        if not target.is_file():
+        # The UI sends the selected active path even before the first capture.
+        # Return empty views for that database; never create it on a read.
+        active_db = Path(self.config["data_dir"]).resolve() / "tracker.sqlite3"
+        if not target.is_file() and target != active_db:
             raise FileNotFoundError(f"Database not found: {target}")
 
         return target

@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 import urllib.error
 import urllib.request
+import urllib.parse
 
 from wechat_tracker.web import WebControlHandler, WebControlServer
 from wechat_tracker.cli import main
@@ -108,6 +109,12 @@ class WebControlReviewTests(unittest.TestCase):
         self.assertEqual(len(active), 1)
         self.assertEqual(active[0]["group_name"], "alpha")
         self.assertEqual(active[0]["event_count"], 0)
+        database = active[0]["path"]
+        for endpoint in ("events", "outbox", "messages"):
+            status, _, body = self.request("/api/" + endpoint + "?" + urllib.parse.urlencode({"db": database}))
+            self.assertEqual(status, 200, body)
+            self.assertTrue(json.loads(body)["ok"])
+        self.assertFalse(Path(database).exists())
 
     def test_failed_switch_does_not_start_a_previously_stopped_mac_monitor(self):
         before = self.config_path.read_bytes()
