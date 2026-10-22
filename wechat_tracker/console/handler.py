@@ -197,10 +197,8 @@ class WebControlHandler(BaseHTTPRequestHandler):
                 return
             if path in {"/", "/index.html"}:
                 return self._serve_file(WEB_RESOURCES_DIR / "index.html")
-            if path == "/app.css":
-                return self._serve_file(WEB_RESOURCES_DIR / "app.css")
-            if path == "/app.js":
-                return self._serve_file(WEB_RESOURCES_DIR / "app.js")
+            if path in {"/app.css", "/presentation.js", "/http.js", "/app.js"}:
+                return self._serve_file(WEB_RESOURCES_DIR / path[1:])
 
             # 2. API Endpoints
             if path == "/api/processing":

@@ -132,6 +132,19 @@ class WebDashboardTests(unittest.TestCase):
         except urllib.error.HTTPError as error:
             return error.code, error.headers, error.read()
 
+    def test_client_module_assets_and_dependency_order(self):
+        status, _, html = self._get("/")
+        self.assertEqual(status, 200)
+        for asset in ("presentation.js", "http.js"):
+            with self.subTest(asset=asset):
+                status, headers, body = self._get("/" + asset)
+                self.assertEqual(status, 200)
+                self.assertIn("javascript", headers.get("Content-Type"))
+                self.assertIn(b"Object.freeze", body)
+                self.assertLess(html.index(("/" + asset).encode()), html.index(b"/app.js"))
+        status, _, _ = self._get("/unlisted-client-module.js")
+        self.assertEqual(status, 404)
+
     def test_static_index_html(self):
         status, headers, body = self._get("/")
         self.assertEqual(status, 200)

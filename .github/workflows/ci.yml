@@ -16,6 +16,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - run: node --check wechat_tracker/resources/web/presentation.js
+      - run: node --check wechat_tracker/resources/web/http.js
       - run: node --check wechat_tracker/resources/web/app.js
       - run: node --test tests/frontend/*.test.cjs
   test:
@@ -31,6 +33,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - run: python scripts/sync-version.py --check
       - run: python -m pip install -e ".[dev]"
       - run: python -m ruff check wechat_tracker tests mac scripts
       - run: python -m unittest discover -s tests -v

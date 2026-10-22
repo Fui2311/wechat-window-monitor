@@ -36,7 +36,7 @@ from wechat_tracker.web import WebControlHandler, WebControlServer
 assert Path(wechat_tracker.__file__).is_relative_to(Path(sys.prefix)), wechat_tracker.__file__
 for name in ('mac-capture.swift', 'mac-credentials.swift', 'probe-weixin.ps1', 'stream-weixin.ps1',
              'expand-weixin-forward.ps1', 'screenshot.jsonl', 'config.windows.toml', 'config.macos.toml',
-             'web/index.html', 'web/app.js', 'web/app.css'):
+             'web/index.html', 'web/presentation.js', 'web/http.js', 'web/app.js', 'web/app.css'):
     assert (RESOURCE_ROOT / name).is_file(), name
 assert wechat_tracker.__version__ == sys.argv[1]
 config = Path('demo.local.toml').resolve()
@@ -63,7 +63,7 @@ with sqlite3.connect('state/tracker.sqlite3') as connection:
 server = WebControlServer(('127.0.0.1', 0), WebControlHandler, config)
 thread = threading.Thread(target=server.serve_forever, daemon=True)
 thread.start()
-paths = ['/', '/app.js', '/app.css', '/api/status', '/api/events', '/api/messages', '/api/outbox',
+paths = ['/', '/presentation.js', '/http.js', '/app.js', '/app.css', '/api/status', '/api/events', '/api/messages', '/api/outbox',
          '/api/processing', '/api/preview_email?job_id=1', '/api/calendar/export']
 try:
     for path in paths:
@@ -98,6 +98,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--wheel', type=Path)
     args = parser.parse_args()
+    subprocess.run([sys.executable, str(ROOT / 'scripts' / 'sync-version.py'), '--check'], check=True)
     version = tomllib.loads((ROOT / 'pyproject.toml').read_text(encoding='utf-8'))['project']['version']
     wheel = args.wheel or ROOT / 'dist' / f'wechat_lecture_tracker-{version}-py3-none-any.whl'
     with zipfile.ZipFile(wheel) as archive:

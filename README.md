@@ -2,7 +2,7 @@
 
 本地采集指定微信群的可读消息，识别讲座与学术报告，保留原文，并生成邮件通知与日历文件。提供命令行和浏览器控制台，支持 macOS Accessibility、Windows UIAutomation 和离线 JSONL 输入。
 
-**正式版本：1.0.5 · Python 3.11+ · 核心运行时无第三方 Python 依赖。** 安装包见 [GitHub Releases](https://github.com/Fui2311/wechat_tracking/releases)。
+**正式版本：1.1.0 · Python 3.11+ · 核心运行时无第三方 Python 依赖。** 安装包见 [GitHub Releases](https://github.com/Fui2311/wechat_tracking/releases)。
 
 默认使用本地规则、仅预览邮件；启用 LLM 后才向所配置的兼容接口发送待分析正文，显式启用发信后才投递 SMTP。不会向微信群发送消息或代替用户报名。
 
@@ -40,7 +40,7 @@ Windows PowerShell 用 `python` 创建环境，激活命令为 `.\.venv\Scripts\
 
 ### macOS 实时部署
 
-推荐下载 Release 中的 `WeChatLectureTracker-macOS-1.0.5.zip`，解压后执行：
+推荐下载 Release 中的 `WeChatLectureTracker-macOS-1.1.0.zip`，解压后执行：
 
 ```bash
 python3 mac/verify-package.py .
@@ -142,7 +142,12 @@ wechat_tracker/
 ├── processing.py / web.py# 稳定公共入口，转到各自模块
 ├── notify.py             # SMTP/TLS 传输，兼容导出格式化函数
 ├── bootstrap.py / cli.py # 配置初始化与命令行入口
-└── resources/            # Swift、PowerShell、合成样例、配置模板、Web 静态文件
+└── resources/            # Swift、PowerShell、合成样例和配置模板
+    └── web/              # 浏览器资源，无需构建步骤
+        ├── presentation.js # 纯显示规则：时间、链接安全、监控状态
+        ├── http.js         # 注入 fetch 的请求与错误处理
+        ├── app.js          # 页面状态、DOM 和异步请求协调
+        └── index.html / app.css # 页面结构与样式
 mac/                      # Mac 源码安装器、管理脚本、原生验证
 scripts/                  # 构建、安装包验收及开发辅助脚本
 tests/                    # 行为回归、依赖边界与适配器测试
@@ -152,12 +157,15 @@ docs/                     # 架构、部署、平台说明及历史验收记录
 
 业务层依赖 `ports.py` 中的结构化接口；SQLite 和 SMTP 的选择由 `Engine` 装配，调用方可注入自己的实现。`application/` 不导入桌面采集、SQLite、HTTP、配置持久化或 SMTP。Web 查询以 SQLite 只读连接读取，不能通过查看历史库触发建表或重算。原有 `Engine`、处理接口、命令行、Web API 和 SQLite 表格式继续兼容。
 
+前端通过两个明确的模块接口调用展示规则和 HTTP 适配器：展示规则只接收数据与时区，不读取 DOM、本机存储或配置全局；HTTP 适配器接收请求函数，可用假传输独立验证。主控制器负责页面状态与交互。浏览器按展示模块、HTTP 模块、控制器的顺序加载，无需前端构建工具或运行时依赖。
+
 数据流程与扩展契约见 [架构说明](docs/architecture.md)。项目使用 Python 标准库与系统接口，没有直接依赖 pywechat/wxauto 等机器人框架；历史调研见 [复用核查](docs/github-reuse.md)。
 
 ## 开发、验证与发布
 
 ```bash
 python -m pip install -e '.[dev]'
+python scripts/sync-version.py --check
 python -m ruff check wechat_tracker tests mac scripts
 python -m unittest discover -s tests -v
 node --test tests/frontend/*.test.cjs  # 开发测试需要 Node.js 22+；运行产品不需要
@@ -167,5 +175,7 @@ python scripts/build-mac-package.py
 ```
 
 `check-release.py` 在仓库外创建干净虚拟环境，从 wheel 安装后核对资源、配置初始化、样例去重、邮件预览、ICS 和 HTTP API，禁止调用微信、LLM 或 SMTP。CI 在 Linux、macOS、Windows 运行 Python 回归，并单独运行异步前端状态回归；另检查源码分发包可重新构建及 Mac 安装 ZIP 的清单。桌面窗口、权限、转发和 SMTP 实际送达需要在目标机器单独验收，CI 成功不代表这些物理条件已经满足。
+
+开发和发布操作需要完整 Git 仓库；Mac ZIP 用于安装，不包含开发测试脚本。版本号以 `pyproject.toml` 为唯一来源，修改后运行 `python scripts/sync-version.py --write` 同步 Python、原生助手、界面及文档标签，再审查差异和运行验证。`--check` 只读检查，CI 和安装包冒烟会拒绝标签漂移；历史 CHANGELOG 不会被批量替换。
 
 版本变更见 [CHANGELOG.md](CHANGELOG.md)。`state/`、本机配置、`.env`、授权码、模型密钥、聊天数据库和构建产物均不应进入 Git；发布脚本仅打包明确允许的源码与资源。旧版升级及数据库恢复步骤见 [部署指南](docs/deployment.md)。历史交接和实测文档保留原日期，其运行快照不代表当前服务状态。

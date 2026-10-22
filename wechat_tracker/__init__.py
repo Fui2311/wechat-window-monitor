@@ -1,3 +1,3 @@
 """Local-first lecture tracking. Importing this package never captures or sends."""
 
-__version__ = "1.0.5"
+__version__ = "1.1.0"

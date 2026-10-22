@@ -30,7 +30,12 @@ function harness(storage = new Map(), realRenderers = false) {
     document:{getElementById:get, addEventListener(){}, createElement:element,
       querySelectorAll:()=>['llmBaseUrl','llmModel','llmTimeout','llmKeyEnv','llmApiKey','llmClearKey','llmDisableThinking'].map(get)},
     request:()=>{throw new Error('unexpected request');}, post:()=>{throw new Error('unexpected post');}});
-  vm.runInContext(source + `\napiGet = url => request(url); apiPost = (url, body) => post(url, body);
+  ctx.fetch=async (url, options) => {
+    const data = options?.method === 'POST' ? await ctx.post(url, JSON.parse(options.body)) : await ctx.request(url);
+    return {ok:true, json:async()=>data};
+  };
+  for (const file of ['presentation.js','http.js']) vm.runInContext(readFileSync(resolve(__dirname, '../../wechat_tracker/resources/web',file),'utf8'),ctx);
+  vm.runInContext(source + `\n
     ${realRenderers ? '' : 'renderEvents = () => {}; renderOutbox = () => {};'} showToast = () => {};
     globalThis.app = {state, selectDatabase, loadDatabases, loadEvents, loadOutbox, openEmailPreview,
       renderProcessing, saveProcessing, confirmSendService, refreshStatus, formatTime, formatClockTime, formatCaptureTime, refreshConsoleData, controlService, loadServices, renderEvents, serviceStatusView, exportCalendar};`, ctx);
