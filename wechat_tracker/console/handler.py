@@ -433,6 +433,8 @@ class WebControlHandler(BaseHTTPRequestHandler):
 
             if path == "/api/service/stop":
                 with _OPERATION_LOCK:
+                    if "expected_group" in body and body["expected_group"] != self.config.get("group"):
+                        raise ValueError("管理群已变更，请重新核对当前群后再操作")
                     self._pause_service_startup(self.config, self.config_path)
                     result = stop_service(self.config)
                 return self._send_json({"ok": True, "result": _sanitize_service(result)})

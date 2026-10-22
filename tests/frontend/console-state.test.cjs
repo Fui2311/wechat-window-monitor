@@ -31,7 +31,7 @@ function harness(storage = new Map()) {
   vm.runInContext(source + `\napiGet = url => request(url); apiPost = (url, body) => post(url, body);
     renderEvents = () => {}; renderOutbox = () => {}; showToast = () => {};
     globalThis.app = {state, selectDatabase, loadDatabases, loadEvents, loadOutbox, openEmailPreview,
-      renderProcessing, saveProcessing, confirmSendService, refreshStatus, formatTime, formatClockTime, formatCaptureTime};`, ctx);
+      renderProcessing, saveProcessing, confirmSendService, refreshStatus, formatTime, formatClockTime, formatCaptureTime, refreshConsoleData, controlService};`, ctx);
   return {ctx, app:ctx.app, get, storage};
 }
 const db = path => ({path, label:path, group_name:path, is_active:path==='A'});
@@ -207,4 +207,98 @@ test('event, capture and status clocks follow configured timezone including DST 
   assert.equal(app.formatTime('2026-12-24T07:00:09Z'),'2026-12-24 02:00');
   assert.equal(app.formatTime('not a date'),'');
   assert.equal(app.formatCaptureTime(null),'未记录');
+});
+
+test('manual refresh discovers sources before loading records and preserves the current draft', async () => {
+  const storage = new Map([['selectedDatabase','B'],['selectedDatabaseActive','A']]);
+  const {ctx,app,get}=harness(storage);const inventory=deferred();const calls=[];
+  app.state.processingDirty=true;app.state.processingInitialized=true;get('llmModel').value='unsaved draft';
+  ctx.request=async url=>{
+    calls.push(url);
+    if(url==='/api/status')return {service:{},config:{group:'A',processing:{llm_model:'saved model'}}};
+    if(url==='/api/databases')return inventory.promise;
+    if(url.startsWith('/api/events'))return {events:[]};
+    if(url.startsWith('/api/messages'))return {messages:[],counts:{},total:0};
+    if(url.startsWith('/api/outbox'))return {jobs:[]};
+    if(url==='/api/services')return {services:[]};
+    throw new Error(url);
+  };
+  const refresh=app.refreshConsoleData();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(calls,['/api/status','/api/databases']);
+  assert.equal(get('manualRefreshBtn').disabled,true);
+  await app.refreshConsoleData(); // Duplicate clicks do not dispatch another batch.
+  assert.equal(calls.length,2);
+  inventory.resolve({databases:[db('A'),db('B'),db('C')]});await refresh;
+  assert.equal(app.state.databases.length,3);
+  assert.equal(app.state.selectedDb,'B');
+  assert.ok(calls.includes('/api/events?db=B'));
+  assert.equal(get('llmModel').value,'unsaved draft');
+  assert.equal(get('manualRefreshBtn').disabled,false);
+});
+
+test('manual refresh follows a new active group instead of loading the former source', async () => {
+  const storage=new Map([['selectedDatabase','A'],['selectedDatabaseActive','A']]);
+  const {ctx,app}=harness(storage);const calls=[];
+  ctx.request=async url=>{
+    calls.push(url);
+    if(url==='/api/status')return {service:{},config:{group:'C'}};
+    if(url==='/api/databases')return {databases:[{...db('C'),is_active:true},{...db('A'),is_active:false}]};
+    if(url.startsWith('/api/events'))return {events:[]};
+    if(url.startsWith('/api/messages'))return {messages:[],counts:{},total:0};
+    if(url.startsWith('/api/outbox'))return {jobs:[]};
+    if(url==='/api/services')return {services:[]};
+    throw new Error(url);
+  };
+  await app.refreshConsoleData();
+  assert.equal(app.state.selectedDb,'C');
+  assert.ok(calls.includes('/api/events?db=C'));
+  assert.ok(!calls.includes('/api/events?db=A'));
+});
+
+test('all service controls carry their displayed group and restart keeps its existing mode by default', async () => {
+  const {ctx,app}=harness();const posts=[];app.state.config.group='A';
+  ctx.post=async(url,body)=>{posts.push({url,body});return {ok:true};};
+  vm.runInContext('loadConsoleData=async()=>{};',ctx);
+  await app.controlService('start');await app.controlService('restart');await app.controlService('stop',false,'old A');
+  assert.equal(posts[0].body.expected_group,'A');
+  assert.equal(posts[1].body.expected_group,'A');
+  assert.equal('send' in posts[1].body,false);
+  assert.equal(posts[2].body.expected_group,'old A');
+  app.state.config.group='';await app.controlService('stop');
+  assert.equal(posts.length,3);
+});
+
+test('offline refresh keeps the selected source and draft, and allows retry', async () => {
+  const {ctx,app,get}=harness();app.state.selectedDb='A';app.state.events=[{id:'saved A'}];
+  get('llmModel').value='unsaved draft';const calls=[];
+  ctx.request=async url=>{calls.push(url);throw new Error('backend offline');};
+  await app.refreshConsoleData();
+  assert.deepEqual(calls,['/api/status']);
+  assert.equal(app.state.selectedDb,'A');
+  assert.equal(app.state.events[0].id,'saved A');
+  assert.equal(get('llmModel').value,'unsaved draft');
+  assert.equal(app.state.isBackendOnline,false);
+  assert.equal(get('manualRefreshBtn').disabled,false);
+});
+
+test('another page changing shared storage does not hide this page managed-source change', async () => {
+  const storage=new Map([['selectedDatabase','A'],['selectedDatabaseActive','A']]);
+  const {ctx,app}=harness(storage);
+  storage.set('selectedDatabaseActive','B'); // Second page has already observed the new group.
+  ctx.request=async()=>({databases:[{...db('B'),is_active:true},{...db('A'),is_active:false}]});
+  await app.loadDatabases();
+  assert.equal(app.state.selectedDb,'B');
+  assert.equal(app.state.activeDbPath,'B');
+});
+
+test('status updates refresh untouched group candidates while preserving an explicit draft', async () => {
+  const {ctx,app,get}=harness();
+  ctx.request=async()=>({service:{},config:{group:'A'}});await app.refreshStatus();
+  assert.equal(get('inputSwitchGroup').value,'A');
+  ctx.request=async()=>({service:{},config:{group:'B'}});await app.refreshStatus();
+  assert.equal(get('inputSwitchGroup').value,'B');
+  app.state.switchGroupDirty=true;get('inputSwitchGroup').value='intended C';
+  ctx.request=async()=>({service:{},config:{group:'D'}});await app.refreshStatus();
+  assert.equal(get('inputSwitchGroup').value,'intended C');
 });

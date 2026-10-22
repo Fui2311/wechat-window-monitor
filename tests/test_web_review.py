@@ -74,6 +74,22 @@ class WebControlReviewTests(unittest.TestCase):
         self.assertEqual(status, 403)
         start.assert_not_called()
 
+    def test_old_group_service_actions_are_rejected_before_native_controls(self):
+        self.server.config['group'] = 'beta'
+        with patch('wechat_tracker.console.handler.start_service') as start, \
+                patch('wechat_tracker.console.handler.stop_service') as stop, \
+                patch('wechat_tracker.console.handler.read_status') as read, \
+                patch.object(WebControlHandler, '_pause_service_startup') as pause:
+            for action in ('start', 'start_send', 'restart', 'stop'):
+                with self.subTest(action=action):
+                    status, _, body = self.request('/api/service/'+action, body={'expected_group': 'alpha'})
+                    self.assertEqual(status, 400)
+                    self.assertIn('管理群已变更', json.loads(body)['error'])
+            start.assert_not_called()
+            stop.assert_not_called()
+            read.assert_not_called()
+            pause.assert_not_called()
+
     def test_console_stop_acknowledges_and_exits_without_changing_monitor(self):
         before = self.config_path.read_bytes()
         with patch("wechat_tracker.console.handler.stop_service") as stop, \
