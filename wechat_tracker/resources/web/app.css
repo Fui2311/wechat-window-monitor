@@ -470,10 +470,14 @@ body {
   padding: 4px;
   border-radius: var(--radius-lg);
   width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
   border: 1px solid var(--border);
 }
 
 .tab-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1248,6 +1252,8 @@ p.capture-note { margin: 12px 0 16px; }
 .processing-fields .processing-clear { flex-direction: row; align-items: center; }
 .processing-actions, .processing-switch { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 #processingFeedback { font-size: 13px; color: var(--text-secondary); }
+.processing-advanced { margin-top: 16px; }
+.processing-advanced > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--blue); padding: 10px 0; }
 .processing-test { margin-top: 22px; border-top: 1px solid var(--border); padding-top: 16px; }
 .processing-test summary { cursor: pointer; margin-bottom: 12px; }
 .processing-test textarea { display: block; box-sizing: border-box; width: 100%; margin: 12px 0; resize: vertical; }

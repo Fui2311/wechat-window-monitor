@@ -27,7 +27,7 @@
               <span id="serviceStatusText">检查中...</span>
             </span>
           </h1>
-          <span class="brand-sub">微信群讲座消息捕获与邮箱通知 · 1.0.3</span>
+          <span class="brand-sub">微信群讲座消息捕获与邮箱通知 · 1.0.4</span>
           <span style="font-size: 11px; color: var(--text-tertiary); margin-left: 8px;">仅采集已加载的可读消息，不代表完整历史</span>
         </div>
       </div>
@@ -468,24 +468,28 @@
           <p class="processing-help">校区规则（本地规则与 LLM 共用）：仅提醒石牌校区／石牌校园；大学城、佛山／南海及其他明确校区不提醒。未提及校区仍可通知，不按教学楼名推测；以实际举办地点为准，主讲履历或报名对象中的校区不作为举办地点。多地点包含石牌会场时可提醒。</p>
           <p class="processing-help" id="processingMailFormat" role="status">邮件格式随处理方式切换：本地规则发送原文；LLM 展示提取信息并附原文。</p>
           <p class="processing-help" id="processingScope">配置持续保存，适用于后续所有新消息；各服务的处理设置来源见下方服务列表。数据源切换仅查看对应群的记录。</p>
-          <form id="processingForm">
-            <div class="processing-fields">
-              <label>接口基础地址<input id="llmBaseUrl" class="text-input" type="url" required placeholder="https://api.example.com/v1" autocomplete="off"></label>
-              <label>模型名称<input id="llmModel" class="text-input" type="text" placeholder="填写服务提供的模型名称" maxlength="1000" autocomplete="off"></label>
-              <label>API Key<input id="llmApiKey" class="text-input" type="password" placeholder="未填写则保留已保存的密钥" autocomplete="new-password" maxlength="4096"><span id="llmKeyStatus" class="processing-help">尚未配置密钥（本地接口可留空）</span></label>
-              <label>请求超时（秒）<input id="llmTimeout" class="text-input" type="number" min="1" max="60" value="15" required></label>
-              <label>密钥环境变量（可选来源）<input id="llmKeyEnv" class="text-input" type="text" value="WECHAT_LLM_API_KEY" autocomplete="off" required></label>
-              <label><span class="processing-clear"><input id="llmDisableThinking" type="checkbox">关闭 thinking（百炼 / DeepSeek）</span><span class="processing-help">勾选后请求直接回答；不勾选时遵循服务默认设置。保存配置与测试提取均使用此选项。</span></label>
-              <label class="processing-clear"><input id="llmClearKey" type="checkbox">清除本机保存的密钥</label>
-            </div>
-            <div class="processing-actions"><button id="btnSaveProcessing" type="submit" class="btn btn-primary">保存配置</button><span id="processingFeedback" role="status" aria-live="polite"></span></div>
-          </form>
-          <details class="processing-test">
-            <summary>测试 LLM 内容提取</summary>
-            <label for="llmTestText" id="llmTestHint" class="processing-help">仅发送下方输入的原文，可使用尚未保存的配置；不入库、不发信。缺少发送时间时不猜测相对日期。</label>
-            <textarea id="llmTestText" class="text-input" rows="5" maxlength="10000" placeholder="粘贴一条讲座通知，查看提取结果"></textarea>
-            <button id="btnTestProcessing" type="button" class="btn btn-secondary">测试提取</button>
-            <pre id="llmTestResult" role="status" aria-live="polite">尚未测试</pre>
+          <details id="llmSettings" class="processing-advanced">
+            <summary>可选：LLM 接口配置与测试</summary>
+            <p class="processing-help">本地规则无需填写这些参数。展开只查看或编辑设置，不会切换处理方式；测试会调用接口，但不保存、不入库、不发信。</p>
+            <form id="processingForm">
+              <div class="processing-fields">
+                <label>接口基础地址<input id="llmBaseUrl" class="text-input" type="url" required placeholder="https://api.example.com/v1" autocomplete="off"></label>
+                <label>模型名称<input id="llmModel" class="text-input" type="text" placeholder="填写服务提供的模型名称" maxlength="1000" autocomplete="off"></label>
+                <label>API Key<input id="llmApiKey" class="text-input" type="password" placeholder="未填写则保留已保存的密钥" autocomplete="new-password" maxlength="4096"><span id="llmKeyStatus" class="processing-help">尚未配置密钥（本地接口可留空）</span></label>
+                <label>请求超时（秒）<input id="llmTimeout" class="text-input" type="number" min="1" max="60" value="15" required></label>
+                <label>密钥环境变量（可选来源）<input id="llmKeyEnv" class="text-input" type="text" value="WECHAT_LLM_API_KEY" autocomplete="off" required></label>
+                <label><span class="processing-clear"><input id="llmDisableThinking" type="checkbox">关闭 thinking（百炼 / DeepSeek）</span><span class="processing-help">勾选后请求直接回答；不勾选时遵循服务默认设置。保存配置与测试提取均使用此选项。</span></label>
+                <label class="processing-clear"><input id="llmClearKey" type="checkbox">清除本机保存的密钥</label>
+              </div>
+              <div class="processing-actions"><button id="btnSaveProcessing" type="submit" class="btn btn-primary">保存配置</button><span id="processingFeedback" role="status" aria-live="polite"></span></div>
+            </form>
+            <details class="processing-test">
+              <summary>测试 LLM 内容提取</summary>
+              <label for="llmTestText" id="llmTestHint" class="processing-help">仅发送下方输入的原文，可使用尚未保存的配置；不入库、不发信。缺少发送时间时不猜测相对日期。</label>
+              <textarea id="llmTestText" class="text-input" rows="5" maxlength="10000" placeholder="粘贴一条讲座通知，查看提取结果"></textarea>
+              <button id="btnTestProcessing" type="button" class="btn btn-secondary">测试提取</button>
+              <pre id="llmTestResult" role="status" aria-live="polite">尚未测试</pre>
+            </details>
           </details>
         </div>
       </div>

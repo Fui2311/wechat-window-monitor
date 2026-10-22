@@ -302,3 +302,21 @@ test('status updates refresh untouched group candidates while preserving an expl
   ctx.request=async()=>({service:{},config:{group:'D'}});await app.refreshStatus();
   assert.equal(get('inputSwitchGroup').value,'intended C');
 });
+
+test('optional LLM settings follow initial mode and preserve the user disclosure choice on refresh', () => {
+  const {app,get}=harness();
+  app.renderProcessing({processing_mode:'rules',llm_model:'saved'});
+  assert.equal(get('llmSettings').open,false);
+  get('llmSettings').open=true;app.state.processingDirty=true;get('llmModel').value='draft';
+  app.renderProcessing({processing_mode:'rules',llm_model:'saved'});
+  assert.equal(get('llmSettings').open,true);
+  assert.equal(get('llmModel').value,'draft');
+  app.renderProcessing({processing_mode:'llm',llm_model:'saved'});
+  assert.equal(get('llmSettings').open,true);
+  get('llmSettings').open=false;
+  app.renderProcessing({processing_mode:'llm',llm_model:'saved'});
+  assert.equal(get('llmSettings').open,false);
+  const initialLlm=harness();initialLlm.app.renderProcessing({processing_mode:'llm',settings_shared:true});
+  assert.equal(initialLlm.get('llmSettings').open,true);
+  assert.equal(initialLlm.get('llmModel').disabled,true);
+});
