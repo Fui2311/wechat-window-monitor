@@ -3,10 +3,10 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "wechat-lecture-tracker"
-version = "1.1.2"
+name = "wechat-window-monitor"
+version = "2.0.0"
 readme = "README.md"
-description = "Local Weixin lecture capture, evidence extraction and preview-first notifications"
+description = "Exact-name WeChat window monitoring with generated local and semantic recognition cores"
 requires-python = ">=3.11"
 dependencies = []
 
@@ -14,17 +14,20 @@ dependencies = []
 dev = ["build>=1.2,<2", "setuptools>=68", "wheel>=0.43", "ruff>=0.11,<1", "tzdata>=2024.1; sys_platform == 'win32'"]
 
 [project.urls]
-Repository = "https://github.com/Fui2311/wechat_tracking"
-Changelog = "https://github.com/Fui2311/wechat_tracking/blob/main/CHANGELOG.md"
+Repository = "https://github.com/Fui2311/wechat-window-monitor"
+Changelog = "https://github.com/Fui2311/wechat-window-monitor/blob/main/CHANGELOG.md"
 
 [project.scripts]
+wechat-monitor = "wechat_monitor.cli:main"
 wechat-track = "wechat_tracker.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["wechat_tracker*"]
+include = ["wechat_monitor*", "wechat_tracker*"]
 
 [tool.setuptools.package-data]
 wechat_tracker = ["resources/*.ps1", "resources/*.jsonl", "resources/*.swift", "resources/*.toml", "resources/web/*"]
+
+wechat_monitor = ["resources/*.txt", "resources/dashboard/*", "resources/dashboard/assets/*"]
 
 [tool.ruff]
 target-version = "py311"
