@@ -6,6 +6,7 @@ from pathlib import Path
 import sqlite3
 from ..paths import PROJECT_ROOT
 from .presentation import _delivery_info
+from .discovery_policy import database_candidates
 
 
 def delivery_backlog(db_path: Path, now: str) -> dict:
@@ -153,28 +154,16 @@ def _list_databases(active_data_dir: str, current_group: str, services=()) -> li
     search_roots = [Path(active_data_dir).resolve().parent, PROJECT_ROOT / "state"]
     search_roots.extend(Path(svc["data_dir"]).resolve() for svc in services if svc.get("data_dir"))
     service_by_db = {str(Path(svc["data_dir"]).resolve() / "tracker.sqlite3"): svc for svc in services if svc.get("data_dir")}
-    for root in search_roots:
+    for root in dict.fromkeys(search_roots):
         if not root.is_dir():
             continue
-        for sqlite_path in root.rglob("*.sqlite3"):
+        for sqlite_path in database_candidates(root):
             resolved = str(sqlite_path.resolve())
             if resolved in seen:
                 continue
 
             name_lower = sqlite_path.name.lower()
             parent_lower = sqlite_path.parent.name.lower()
-            if (
-                "backup" in name_lower
-                or "backup" in parent_lower
-                or any("backup" in part.lower() for part in sqlite_path.parts)
-                or "before" in name_lower
-                or "previous" in name_lower
-                or "last-good" in name_lower
-                or name_lower.endswith(".tmp.sqlite3")
-                or name_lower.startswith(".")
-            ):
-                continue
-
             seen.add(resolved)
             event_count = 0
             db_group = None

@@ -1,4 +1,4 @@
-# 架构与扩展契约（1.1.0）
+# 架构与扩展契约（1.1.1）
 
 本项目围绕“指定群的捕获证据 → 通知记录 → 可审计投递”组织代码。部署入口负责选择平台，业务用例通过接口调用存储、处理器和发信器。模块划分见根目录 README。
 
@@ -33,6 +33,7 @@ flowchart LR
 - `persistence.SQLiteRepository` 实现仓储契约。`Store` 管连接、建表、完整性检查及备份；仓储管查询、消息去重插入和队列原子领取。
 - `extraction.settings` 管校验、热加载、可选共享设置引用与密钥写入；`llm` 管受限 HTTP 和证据核对；`pipeline` 管模式选择与失败回退。`processing.py` 保留旧导入入口。
 - `presentation.notifications` 同时用于队列发送和网页预览。SMTP、TLS、邮箱配置校验位于 `notify.py`，业务层不直接导入传输实现。
+- `console.discovery_policy` 集中处理发现根内的相对路径过滤与目录剪枝；数据源查询和服务发现共用策略，明确的活动/服务根仍按配置处理。
 - `console.handler` 管请求校验、路由和控制操作；`queries` 管只读 SQL；`discovery` 发现受管理实例；`presentation` 白名单投影状态；`server` 管 HTTP 生命周期。`web.py` 保留公共入口。
 - `engine.Engine` 是组合根，装配默认适配器，保留 `Engine(store, config)` 调用形式。平台采集、常驻服务和命令行仍使用这一入口。
 

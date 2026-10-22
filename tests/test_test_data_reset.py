@@ -9,6 +9,8 @@ from unittest.mock import patch
 import urllib.error
 import urllib.request
 
+from console_fixtures import isolated_console
+
 from wechat_tracker.capture import CaptureError
 from wechat_tracker.engine import Engine
 from wechat_tracker.service import MonitorService, read_status, reset_test_data
@@ -39,7 +41,7 @@ class TestDataResetTests(unittest.TestCase):
                     text="讲座通知：测试原文\n活动时间：2026年10月22日15:00")
 
     def test_control_reset_preserves_sending_and_accepts_new_copy_without_replaying_baseline(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, isolated_console(directory):
             cfg = self.settings(directory)
             old = self.message()
             forward = dict(self.message("old-card"), kind="forward", text="群聊的聊天记录 讲座通知")
@@ -87,7 +89,7 @@ class TestDataResetTests(unittest.TestCase):
                 store.close()
 
     def test_capture_failure_and_formal_group_leave_records_unchanged(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, isolated_console(directory):
             service = MonitorService(self.settings(directory))
             service.store = Store(":memory:")
             try:
@@ -108,7 +110,7 @@ class TestDataResetTests(unittest.TestCase):
                     service.log.removeHandler(handler)
 
     def test_http_reset_requires_identified_test_group_confirmation_and_same_origin(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, isolated_console(directory):
             cfg_path = Path(directory) / "config.toml"
             cfg_path.write_text('group = "正式群"\ndata_dir = "data"\n')
             server = WebControlServer(("127.0.0.1", 0), WebControlHandler, cfg_path)
@@ -142,7 +144,7 @@ class TestDataResetTests(unittest.TestCase):
                 thread.join(2)
 
     def test_nested_test_service_is_discovered_and_tokens_are_not_exposed(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, isolated_console(directory):
             root = Path(directory).resolve() / "state"
             current = root / "formal" / "data"
             test = root / "test" / "data"
