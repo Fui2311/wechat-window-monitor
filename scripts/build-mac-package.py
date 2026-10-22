@@ -13,18 +13,22 @@ ROOT = Path(__file__).resolve().parent.parent
 def build():
     version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     name = "WeChatLectureTracker-macOS-" + version
-    files = {"README.md": ROOT / "docs/macos.md", "pyproject.toml": ROOT / "pyproject.toml",
-             "HANDOFF.md": ROOT / "HANDOFF.md"}
+    files = {name: ROOT / name for name in ("README.md", "pyproject.toml", "CHANGELOG.md", "config.example.toml")}
+    for doc_name in ("architecture.md", "deployment.md", "macos.md", "email.md", "llm-processing.md",
+                 "automatic-forward.md", "macos-forward-background.md", "capture.md", "service.md",
+                 "database-recovery.md"):
+        files["docs/" + doc_name] = ROOT / "docs" / doc_name
     for folder, extensions in (("mac", {".py", ".command", ".toml"}),
-                               ("wechat_tracker", {".py", ".swift", ".jsonl"}),
+                               ("wechat_tracker", {".py", ".swift", ".jsonl", ".html", ".css", ".js", ".toml"}),
                                ("examples", {".jsonl"})):
         for path in (ROOT / folder).rglob("*"):
             if path.is_file() and path.suffix in extensions and "__pycache__" not in path.parts:
                 files[path.relative_to(ROOT).as_posix()] = path
     contents = {path: source.read_bytes().replace(b"\r\n", b"\n") for path, source in files.items()}
     contents["PACKAGE-VALIDATION.json"] = json.dumps(dict(version=version, artifact="macOS source installer",
-        windows_checks=["full-file SHA256", "ZIP CRC", "Python syntax", "synthetic replay"],
-        macos_native_compile="pending Mac execution", macos_live_capture="pending Mac execution",
+        build_checks=["full-file SHA256", "ZIP CRC", "closed file allowlist"],
+        macos_native_compile="verified separately; see GitHub release validation",
+        macos_live_capture="requires a logged-in, authorized target desktop",
         smtp_credentials_included=False, windows_runtime_included=False), indent=2).encode()
     manifest = "".join(hashlib.sha256(data).hexdigest() + "  " + path + "\n" for path, data in sorted(contents.items()))
     contents["SHA256SUMS.txt"] = manifest.encode()

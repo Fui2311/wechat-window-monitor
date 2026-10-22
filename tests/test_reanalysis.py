@@ -39,12 +39,26 @@ class ReanalysisTests(unittest.TestCase):
         self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
         self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM capture_seen").fetchone()[0], 1)
         jobs = self.store.jobs()
-        self.assertEqual(sum(job["status"] == "superseded" for job in jobs), 3)
+        self.assertEqual(sum(job["status"] == "superseded" for job in jobs), 1)
         reminders = [job for job in jobs if job["status"] == "pending" and job["reason"] == "reminder"]
-        self.assertEqual([job["due_at"] for job in reminders], ["2026-10-16T06:30:00+00:00", "2026-10-17T05:30:00+00:00"])
+        self.assertEqual(reminders, [])
         self.assertEqual(self.store.events()[0]["version"], 2)
         self.assertEqual(self.store.events()[0]["analysis_policy"], ANALYSIS_POLICY)
         self.assertNotIn("arrival_at", self.store.events()[0])
+        self.assertFalse(self.engine.rebuild_analysis(self.now)["changed"])
+
+    def test_old_false_cancellation_is_rebuilt_as_a_notice_without_duplicate_delivery(self):
+        with self.store.db:
+            for row in self.store.db.execute("SELECT id,payload FROM events").fetchall():
+                event = json.loads(row["payload"])
+                event.update(status="cancelled", category="lecture_update", needs_review=True, confidence=0.15)
+                self.store.db.execute("UPDATE events SET payload=? WHERE id=?", (json.dumps(event), row["id"]))
+        self.engine.rebuild_analysis(self.now)
+        actual, = self.store.events()
+        self.assertEqual(actual["record_type"], "notice")
+        self.assertEqual(actual["status"], "noticed")
+        self.assertNotIn("confidence", actual)
+        self.assertEqual(len(self.engine.dispatch(self.now)), 1)
         self.assertFalse(self.engine.rebuild_analysis(self.now)["changed"])
 
     def test_sent_or_inflight_data_is_never_replayed(self):

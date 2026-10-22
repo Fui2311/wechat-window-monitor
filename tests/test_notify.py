@@ -10,6 +10,7 @@ from wechat_tracker.notify import (
     EmailConfigurationError,
     EmailNotificationError,
     format_notification,
+    format_notification_html,
     send_email,
 )
 
@@ -133,6 +134,25 @@ class SendEmailTests(unittest.TestCase):
         with self.assertRaises(EmailNotificationError):
             send_email("测试", "正文", self.config)
 
+    @patch("wechat_tracker.notify.smtplib.SMTP_SSL")
+    def test_html_email_keeps_utf8_plain_text_alternative(self, smtp_ssl):
+        smtp = smtp_ssl.return_value.__enter__.return_value
+        smtp.send_message.return_value = {}
+        send_email("讲座通知", "讲座消息：测试\n\n报名链接：https://example.com", self.config,
+                   html_body="<html><body><h1>测试讲座</h1></body></html>")
+        message = smtp.send_message.call_args.args[0]
+        parsed = BytesParser(policy=policy.default).parsebytes(message.as_bytes())
+        self.assertEqual(parsed.get_content_type(), "multipart/alternative")
+        self.assertEqual([p.get_content_type() for p in parsed.iter_parts()], ["text/plain", "text/html"])
+        self.assertIn("讲座消息：测试\n\n报名链接", parsed.get_body(preferencelist=("plain",)).get_content())
+        self.assertIn("<h1>测试讲座</h1>", parsed.get_body(preferencelist=("html",)).get_content())
+
+    @patch("wechat_tracker.notify.smtplib.SMTP_SSL")
+    def test_invalid_html_body_never_connects(self, smtp_ssl):
+        with self.assertRaises(EmailConfigurationError):
+            send_email("测试", "正文", self.config, html_body={})
+        smtp_ssl.assert_not_called()
+
 
 class FormatNotificationTests(unittest.TestCase):
     def test_body_contains_exactly_three_fields(self):
@@ -183,6 +203,104 @@ class FormatNotificationTests(unittest.TestCase):
         self.assertEqual(len(body.splitlines()), 3)
         self.assertLess(body.count("长"), 501)
         self.assertNotIn("不应输出原文", body)
+
+    def test_notice_body_is_exact_source_including_paragraphs_emoji_and_spaces(self):
+        raw = ("📣【讲座报名通知】\n\n主题：原文标题\n  主讲人：某教授\n"
+               "讲座时间：10月22日 15:00-17:30\n温馨提示：请提前到场。\n")
+        event = dict(category="lecture_notice", title="错误拆分标题", source_text=raw,
+                     summary="错误摘要", signup_start_text="错误时间", signup_url="https://wrong.example",
+                     start_at="bad-date", schedule_ready=True)
+        with patch('wechat_tracker.presentation.notifications._display_datetime', side_effect=AssertionError('must not parse fields')):
+            subject, body = format_notification(event, 'new')
+            html = format_notification_html(event, 'new')
+        self.assertEqual(subject, '[讲座] 📣【讲座报名通知】')
+        self.assertEqual(body, raw)
+        self.assertIn('white-space:pre-wrap', html)
+        for value in ('错误拆分标题', '错误摘要', '错误时间', 'wrong.example', '报名开始时间'):
+            self.assertNotIn(value, body)
+            self.assertNotIn(value, html)
+
+    def test_missing_source_is_disclosed_without_inventing_original_from_summary(self):
+        event = dict(category='lecture_notice', title='已有标题', summary='自动生成的摘要',
+                     deadline_at='2026-10-17T18:00:00+08:00')
+        subject, body = format_notification(event, 'new')
+        self.assertEqual(subject, '[讲座] 已有标题')
+        self.assertEqual(body, '原文未保存。')
+        self.assertNotIn('自动生成的摘要', format_notification_html(event, 'new'))
+
+    def test_unread_forward_keeps_its_actual_preview_and_missing_body_notice(self):
+        note = '转发卡片正文未读取，需展开核对 <原文>'
+        raw = '聊天记录：研途分享会讲座通知'
+        event = dict(category='lecture_notice', source_text=raw, evidence=dict(content_note=note))
+        _, body = format_notification(event, 'new')
+        html = format_notification_html(event, 'new')
+        self.assertEqual(body, raw + '\n\n提示：' + note)
+        self.assertIn('&lt;原文&gt;', html)
+        self.assertNotIn('<原文>', html)
+        for generated in ('未注明', '报名开始时间', '讲座活动时间', '未从已读内容中取得'):
+            self.assertNotIn(generated, body)
+
+    def test_subject_uses_first_source_line_and_only_subject_is_bounded(self):
+        raw = '【讲座通知】' + '长' * 200 + '\n\n' + '完整正文' * 500 + '\n最后一句也要保留'
+        subject, body = format_notification(dict(category='lecture_notice', title='错误标题', source_text=raw), 'new')
+        self.assertTrue(subject.startswith('[讲座] 【讲座通知】'))
+        self.assertNotIn('\n', subject)
+        self.assertLessEqual(len(subject), 85)
+        self.assertEqual(body, raw)
+        self.assertTrue(body.endswith('最后一句也要保留'))
+
+    def test_raw_time_and_requirements_are_not_rewritten_or_removed(self):
+        raw = '测试讲座\n讲座时间：10月19日15:00-16:00\n报名截止：明天\n必须签到、携带学术卡。'
+        event = dict(category='lecture_notice', source_text=raw, start_at='2026-10-19T15:00:00+08:00',
+                     end_at='2026-10-19T16:00:00+08:00', schedule_ready=True)
+        _, body = format_notification(event, 'new')
+        self.assertEqual(body, raw)
+        self.assertNotIn('北京时间', body)
+
+    def test_html_escapes_source_and_never_executes_source_markup(self):
+        raw = '<script>讲座</script>\n<img src=x onerror="alert(1)">\n地址 javascript:alert(1)'
+        event = dict(category='lecture_notice', source_text=raw)
+        _, body = format_notification(event, 'new')
+        html = format_notification_html(event, 'new')
+        self.assertEqual(body, raw)
+        self.assertIn('&lt;script&gt;讲座&lt;/script&gt;', html)
+        self.assertIn('&lt;img', html)
+        self.assertNotIn('<script>', html)
+        self.assertNotIn('<img', html)
+        self.assertNotIn('href="javascript:', html)
+
+    def test_html_preserves_literal_signup_url_in_place(self):
+        raw = '讲座报名\n报名链接：https://example.com/signup?a=1&b=2#form\n请自行查看确认名单。'
+        event = dict(category='lecture_notice', source_text=raw, signup_url='https://wrong.example')
+        _, body = format_notification(event, 'new')
+        html = format_notification_html(event, 'new')
+        self.assertEqual(body, raw)
+        self.assertIn('href="https://example.com/signup?a=1&amp;b=2#form"', html)
+        self.assertIn('请自行查看确认名单。', html)
+        self.assertNotIn('wrong.example', html)
+        self.assertNotIn('打开报名链接', html)
+        self.assertNotIn('@import', html)
+
+    def test_html_source_text_roundtrips_without_losing_spaces_or_linebreaks(self):
+        from html.parser import HTMLParser
+        class SourceReader(HTMLParser):
+            def __init__(self):
+                super().__init__(convert_charrefs=True)
+                self.inside = False
+                self.parts = []
+            def handle_starttag(self, tag, attrs):
+                if tag == 'div' and dict(attrs).get('id') == 'source-text':
+                    self.inside = True
+            def handle_endtag(self, tag):
+                if tag == 'div':
+                    self.inside = False
+            def handle_data(self, data):
+                if self.inside:
+                    self.parts.append(data)
+        raw = '  📣讲座 <原文>\n\n甲 & 乙\t保留空格\nhttps://example.com/?a=1&b=2\n'
+        reader = SourceReader()
+        reader.feed(format_notification_html(dict(category='lecture_notice', source_text=raw), 'new'))
+        self.assertEqual(''.join(reader.parts), raw)
 
 
 if __name__ == "__main__":

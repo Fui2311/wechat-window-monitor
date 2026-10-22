@@ -1,9 +1,20 @@
 group = "2026级计算机研究生通知群"
 data_dir = "state"
 timezone = "Asia/Shanghai"
-# 活动开始前提醒；报名截止时间仅展示，不单独触发提醒。
-reminder_minutes = [1440, 60]
+# 仅发现通知；报名后是否入选由用户自行核对群内确认名单。
+reminder_minutes = []
 max_attempts = 5
+
+# 通知处理：rules 为本地规则；llm 将新消息正文发送至配置的接口。
+processing_mode = "rules"
+# OpenAI 兼容 Chat Completions 基础地址（可使用本地 HTTP 服务）
+llm_base_url = "https://api.openai.com/v1"
+llm_model = ""
+# 可在控制台填写密钥，独立保存到 config.toml.llm-key（POSIX 权限 600；Windows 继承目录 ACL）；也可用环境变量。
+llm_api_key_env = "WECHAT_LLM_API_KEY"
+llm_timeout_seconds = 15
+# 百炼等兼容服务：true 时发送 enable_thinking=false；false 时遵循服务默认设置。
+llm_disable_thinking = false
 
 [service]
 resync_seconds = 15
@@ -18,10 +29,21 @@ mac_helper = "__MAC_HELPER__"
 bundle_id = "com.tencent.xinWeChat"
 mac_header_identifier = ""
 mac_list_identifier = ""
+# 转发详情使用独立的列表选择器；留空时要求详情中列表唯一。
+mac_forward_list_identifier = ""
 follow_tail = true
+# 恢复最小化及历史视口；可能短暂切到微信。先在独立测试群验证，再启用。
+recover_window = false
 auto_expand_forward = false
+# ax_press 不主动切换前台。activate_click 为空闲并完成预告后切到微信读取，再恢复原应用。
+mac_forward_interaction = "ax_press"
+# activate_click 的卡片气泡位置；right 已在本机“邮件测试”自发转发卡片验证。
+mac_forward_card_side = "right"
 forward_window_title = "群聊的聊天记录"
 forward_timeout_seconds = 25
+forward_notice_seconds = 5
+forward_postpone_seconds = 300
+# 已读到子正文的 Mac 卡片复用缓存，不因历史完整性未知而定时补读。
 
 [email]
 smtp_host = "smtp.qq.com"

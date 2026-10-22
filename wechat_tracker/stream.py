@@ -45,6 +45,10 @@ class NativeStream:
                        "--list-id", capture.get("mac_list_identifier", "")]
             if capture.get("follow_tail", True):
                 command.append("--follow-tail")
+            if capture.get("recover_window", False):
+                command.append("--recover-window")
+                command.extend(["--forward-notice-seconds", str(capture.get("forward_notice_seconds", 5)),
+                                "--forward-postpone-seconds", str(capture.get("forward_postpone_seconds", 300))])
             return command
         raise CaptureError("Native capture requires Windows or macOS")
 

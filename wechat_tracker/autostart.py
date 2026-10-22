@@ -8,6 +8,7 @@ from pathlib import Path
 import plistlib
 import subprocess
 import sys
+import time
 import xml.etree.ElementTree as ET
 
 
@@ -15,11 +16,50 @@ def task_name(config):
     return "WeChatLectureTracker-" + hashlib.sha256(config["group"].encode()).hexdigest()[:8]
 
 
+def _operation_error(arguments, process):
+    tool = Path(arguments[0]).name
+    action = arguments[1] if len(arguments) > 1 else ""
+    detail = getattr(process, "stderr", b"").decode("utf-8", errors="replace").strip()
+    message = f"{tool} {action} failed (exit {process.returncode})"
+    if detail:
+        message += ": " + detail[:500]
+    return RuntimeError(message)
+
+
 def _run(arguments, *, check=True):
     process = subprocess.run(arguments, capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if check and process.returncode:
-        raise RuntimeError("User-session task operation failed; inspect Task Scheduler permissions")
+        raise _operation_error(arguments, process)
     return process
+
+
+def _mac_loaded(service):
+    arguments = ["/bin/launchctl", "print", service]
+    result = _run(arguments, check=False)
+    if result.returncode == 0:
+        return True
+    if result.returncode in {3, 113}:
+        return False
+    raise _operation_error(arguments, result)
+
+
+def _mac_bootout(service, timeout=5):
+    """Confirm removal even when launchd reports an already-exited process."""
+    arguments = ["/bin/launchctl", "bootout", service]
+    result = _run(arguments, check=False)
+    deadline = time.monotonic() + timeout
+    while True:
+        loaded = _mac_loaded(service)
+        if not loaded:
+            return
+        # ESRCH and EINPROGRESS can accompany an asynchronous launchd removal.
+        if result.returncode not in {0, 3, 36}:
+            raise _operation_error(arguments, result)
+        if time.monotonic() >= deadline:
+            if result.returncode:
+                raise _operation_error(arguments, result)
+            raise RuntimeError("launchctl bootout did not finish removing the LaunchAgent")
+        time.sleep(0.05)
 
 
 def windows_task(config_path, config, action, *, send=False):
@@ -125,12 +165,12 @@ def mac_agent(config_path, config, action, *, send=False):
         arguments = existing.get("ProgramArguments", [])
         if "--config" not in arguments or arguments[arguments.index("--config") + 1] != config_path:
             raise RuntimeError("The existing LaunchAgent belongs to another configuration")
-    loaded = _run(["/bin/launchctl", "print", service], check=False).returncode == 0
+    loaded = _mac_loaded(service)
     if action == "status":
         return {"installed": target.is_file(), "loaded": loaded, "label": label}
-    if action == "install":
+    if action in {"install", "configure"}:
         if loaded:
-            _run(["/bin/launchctl", "bootout", service])
+            _mac_bootout(service)
         arguments = [sys.executable, "-m", "wechat_tracker", "--config", config_path, "service", "run"]
         if send:
             arguments.append("--send")
@@ -143,20 +183,27 @@ def mac_agent(config_path, config, action, *, send=False):
         temporary.write_bytes(plistlib.dumps(payload))
         temporary.chmod(0o600)
         os.replace(temporary, target)
-        _run(["/bin/launchctl", "bootstrap", domain, str(target)])
+        if action == "install":
+            _run(["/bin/launchctl", "bootstrap", domain, str(target)])
     elif action == "start":
         if not target.is_file():
             raise RuntimeError("Install the LaunchAgent before starting it")
+        expected = [sys.executable, "-m", "wechat_tracker", "--config", config_path, "service", "run"]
+        if send:
+            expected.append("--send")
+        if (existing.get("ProgramArguments") != expected or
+                existing.get("WorkingDirectory") != str(Path(__file__).resolve().parent.parent)):
+            return mac_agent(config_path, config, "install", send=send)
         if not loaded:
             _run(["/bin/launchctl", "bootstrap", domain, str(target)])
         _run(["/bin/launchctl", "kickstart", service])
     elif action == "pause":
         if loaded:
-            _run(["/bin/launchctl", "bootout", service])
+            _mac_bootout(service)
     elif action == "uninstall":
         if loaded:
-            _run(["/bin/launchctl", "bootout", service])
+            _mac_bootout(service)
         target.unlink(missing_ok=True)
     else:
         raise ValueError("Unsupported LaunchAgent action")
-    return {"installed": action != "uninstall", "label": label, "action": action}
+    return {"installed": target.is_file(), "label": label, "action": action}

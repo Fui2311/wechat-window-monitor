@@ -1,6 +1,6 @@
 """Mac acceptance checks. Synthetic replay and actual AX readiness stay distinct."""
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import platform
@@ -21,17 +21,24 @@ def replay(config, fixtures):
         try:
             engine = Engine(store, config)
             records = [json.loads(line) for line in (fixtures / "screenshot.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+            config = dict(config, group=records[0]["group"], processing_mode="rules", reminder_minutes=[])
+            config.pop("config_path", None)
+            config.pop("processing_config_path", None)
+            engine = Engine(store, config)
             now = datetime.fromisoformat("2026-10-15T13:00:00+08:00")
             for _ in range(2):
                 for record in records:
                     engine.ingest(record, now)
-            assert len(store.events()) == 1 and len(store.jobs()) == 3
+            start = datetime.fromisoformat('2026-10-17T14:30:00+08:00')
+            expected_reminders = {(start - timedelta(minutes=minutes)).astimezone(timezone.utc).isoformat()
+                                  for minutes in config.get('reminder_minutes', [])
+                                  if start - timedelta(minutes=minutes) > now}
+            assert len(store.events()) == 1 and len(store.jobs()) == 1 + len(expected_reminders)
             delivery = engine.dispatch(now=now, send=False)
             assert delivery and all(row["status"] == "preview" for row in delivery)
-            assert all(len(row["body"].splitlines()) == 3 for row in delivery)
-            assert {job["due_at"] for job in store.jobs() if job["reason"] == "reminder"} == {
-                "2026-10-16T06:30:00+00:00", "2026-10-17T05:30:00+00:00"}
-            return dict(events=1, jobs=3, duplicate_replay=True, smtp_sent=False)
+            assert all(store.events()[0]["source_text"] in row["body"] for row in delivery)
+            assert {job["due_at"] for job in store.jobs() if job["reason"] == "reminder"} == expected_reminders
+            return dict(events=1, jobs=len(store.jobs()), duplicate_replay=True, smtp_sent=False)
         finally:
             store.close()
 

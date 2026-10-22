@@ -1,7 +1,5 @@
-# macOS CI 草案（尚未启用）
+# 持续集成
 
-`macos-validation.yml` 是手动触发的原生编译/安装器验收草案，计划在macOS runner编译arm64与x86_64，执行Python测试，再从独立ZIP安装并运行离线验收和原生self-test。它不登录微信、不发送邮件，不验证真实Accessibility/Keychain/LaunchAgent行为。
+1.0.0 的活动工作流是 [ci.yml](../../.github/workflows/ci.yml)：在 Linux、macOS、Windows 和 Python 3.11/3.13 上运行静态检查、回归测试、构建、wheel 安装后验收及 Mac ZIP 清单检查，另有独立的 Swift 原生编译任务。
 
-2026-10-15尝试保存到 `.github/workflows/` 时，GitHub明确拒绝：当前OAuth App没有 `workflow` scope。因此改为普通文档草案，不会被GitHub Actions执行，没有云端编译结果。其余代码与实测记录照常推送。
-
-以后由用户决定是否为仓库配置具备workflow权限的授权，再将草案放入 `.github/workflows/` 手动运行。当前Mac交付的原生编译、安装与实机行为仍以Mac本地验收为准。
+本目录的 `macos-validation.yml` 保留为 0.4.0 历史草案，不会执行。早期 OAuth workflow 权限不足的记录属于当时状态；当前结果以 GitHub Actions 的实际运行状态为准。云端任务不登录微信、不调用真实 SMTP、不替代目标桌面的窗口和授权验收。

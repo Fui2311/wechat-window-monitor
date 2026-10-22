@@ -1,5 +1,6 @@
 """Native, offline-from-source installer. Run with macOS Python 3.11+."""
 import json
+import hashlib
 from pathlib import Path
 import plistlib
 import platform
@@ -8,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import venv
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -17,6 +19,37 @@ APP = Path.home() / "Applications/WeChat Lecture Tracker Capture.app"
 
 def run(command, **kwargs):
     return subprocess.run([str(arg) for arg in command], check=True, **kwargs)
+
+
+def install_credential_helper():
+    """Keep the Keychain executable unchanged across capture-only updates."""
+    app = APP.with_name("WeChat Lecture Tracker Credentials.app")
+    source = ROOT / "wechat_tracker/resources/mac-credentials.swift"
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    info_path = app / "Contents/Info.plist"
+    if info_path.is_file():
+        info = plistlib.loads(info_path.read_bytes())
+        if info.get("CredentialSourceSHA256") == digest:
+            valid = subprocess.run(["/usr/bin/codesign", "--verify", "--strict", str(app)], capture_output=True)
+            if valid.returncode == 0:
+                return app
+    APP.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="wechat-credentials-", dir=APP.parent) as directory:
+        staged = Path(directory) / app.name
+        executable = staged / "Contents/MacOS/wechat-credentials"
+        executable.parent.mkdir(parents=True)
+        run(["/usr/bin/xcrun", "swiftc", "-O", "-swift-version", "5", source, "-o", executable])
+        info = dict(CFBundleIdentifier="local.wechat-lecture-tracker.credentials",
+                    CFBundleName="WeChat Lecture Tracker Credentials", CFBundleExecutable="wechat-credentials",
+                    CFBundlePackageType="APPL", CFBundleVersion="1", LSUIElement=True,
+                    CredentialSourceSHA256=digest)
+        (staged / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
+        run(["/usr/bin/codesign", "--force", "--sign", "-", "--identifier", info["CFBundleIdentifier"], staged], capture_output=True)
+        run(["/usr/bin/codesign", "--verify", "--strict", staged], capture_output=True)
+        if app.exists():
+            app.rename(app.with_name(app.stem + ".backup-" + str(time.time_ns()) + ".app"))
+        shutil.move(str(staged), str(app))
+    return app
 
 
 def main():
@@ -30,6 +63,7 @@ def main():
     run(["/usr/bin/xcrun", "--find", "swiftc"], stdout=subprocess.DEVNULL)
     BASE.mkdir(parents=True, exist_ok=True, mode=0o700)
     APP.parent.mkdir(parents=True, exist_ok=True)
+    install_credential_helper()
     config = BASE / "config.toml"
     python = BASE / ".venv/bin/python"
     # Compile before stopping a working installation; failed compilation is harmless.
@@ -42,8 +76,9 @@ def main():
              ROOT / "wechat_tracker/resources/mac-capture.swift", "-o", executable])
         info = dict(CFBundleIdentifier="local.wechat-lecture-tracker.capture",
                     CFBundleName="WeChat Lecture Tracker Capture", CFBundleExecutable="wechat-capture",
-                    CFBundlePackageType="APPL", CFBundleShortVersionString="0.4.0",
-                    CFBundleVersion="3", LSUIElement=True, LSMinimumSystemVersion="12.0")
+                    CFBundlePackageType="APPL", CFBundleShortVersionString=tomllib.loads(
+                        (ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"],
+                    CFBundleVersion="1", LSUIElement=True, LSMinimumSystemVersion="12.0")
         (contents / "Info.plist").write_bytes(plistlib.dumps(info))
         run(["/usr/bin/codesign", "--force", "--sign", "-", "--identifier", info["CFBundleIdentifier"], app])
         run(["/usr/bin/codesign", "--verify", "--strict", app])
@@ -81,7 +116,7 @@ def main():
     print("Installed:", BASE)
     print("Next: open the capture app, allow Accessibility, open the exact group window, then run:")
     print('bash "' + str(BASE / "mac/manage.command") + '" verify')
-    print('bash "' + str(BASE / "mac/manage.command") + '" install --send')
+    print('bash "' + str(BASE / "mac/manage.command") + '" install')
     print("QQ email setup can be performed later. No email is sent by this installer.")
 
 

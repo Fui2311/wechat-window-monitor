@@ -1,10 +1,12 @@
+> 本文为 1.0.0 平台说明。过去日期的实测记录是历史证据；当前发布验证和目标机器验收需分别核对。
+
 # macOS 独立监控安装与验收
 
-版本 0.4.0，目标为 macOS 12+、Python 3.11+。Apple Silicon 使用原生 arm64 Python，Intel Mac 使用 x86_64。业务分析、去重、队列和 QQ 邮箱提醒在 Mac 本地独立运行，无需 Windows 在线。
+版本 1.0.0，目标为 macOS 12+、Python 3.11+。Apple Silicon 使用原生 arm64 Python，Intel Mac 使用 x86_64。业务分析、去重、队列和 QQ 邮箱提醒在 Mac 本地独立运行，无需 Windows 在线。
 
-交付为 `WeChatLectureTracker-macOS-0.4.0.zip` **源码安装包**，带完整 SHA256 清单；不是已在 Mac 编译、公证的二进制 DMG。包内不含 Windows 脚本、Windows Python、聊天数据库或邮箱凭据。Windows 已做可移植代码/包内容验证；Swift 编译、Accessibility 选择器、Keychain 与 LaunchAgent 实际兼容性待后续 Mac 验收。
+交付为 `WeChatLectureTracker-macOS-1.0.0.zip` **源码安装包**，带完整 SHA256 清单；不是公证的二进制 DMG。包内不含 Windows 脚本、Windows Python、聊天数据库或邮箱凭据。初版由 Windows 完成可移植代码/包内容验证；2026-10-15 已在 Apple Silicon Mac 完成原生编译、目标群短时采集、Keychain、LaunchAgent 和配置邮件送达验收。具体本机证据及尚未完成项目记录在开发树 `docs/MAC_LOCAL_TESTING.md`，其他 Mac 仍需运行下述验收。
 
-通知与Windows统一为讲座摘要、报名截止、活动时间三项；手动报名，提醒以活动开始为锚点。旧方案未发信数据库升级前须停止服务、运行 `rebuild-analysis`，然后保持原模式启动；命令建立校验备份，已有已发送记录时拒绝自动重放。
+默认规则模式通知展示实际可读原文，LLM 模式展示提取信息与原文；报名开始时间、活动时间和链接只取有证据的字段，截止时间不当作开始时间。手动报名，是否入选由用户自行核对群内确认名单。`reminder_minutes = []` 关闭活动前定时提醒。当前策略的数据库无需重算；更早版本的迁移见 [部署指南](deployment.md)。
 
 ## 安装
 
@@ -42,14 +44,22 @@ bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command"
 
 必须得到原生 `native_probe.ok=true` 才说明当前版本能绑定该群。`accessibility_permission_required` 表示授权未就绪，`process_not_found` 表示微信进程未就绪，`target_window_not_ready` 表示没有可核对的群窗口，`message_list_not_unique` 表示消息列表还需适配。微信默认 Bundle ID 为 `com.tencent.xinWeChat`，不同版本需核查本机实际值再修改配置。
 
-不自动选择联系人栏中同名文字作为当前聊天。主窗口只有在人工核实后，明确填写 `capture.mac_header_identifier` 才能绑定；多列表场景需要核实 `capture.mac_list_identifier`。两者默认留空，匹配失败就等待，不读取其他聊天。Mac 选择器从未在本机实测，首次验收若不通过，须根据实际 Accessibility 结构继续适配。
+不自动选择联系人栏中同名文字作为当前聊天。主窗口只有在人工核实后，明确填写 `capture.mac_header_identifier` 才能绑定；多列表场景需要核实 `capture.mac_list_identifier`。两者默认留空，匹配失败就等待，不读取其他聊天。首次验收若不通过，须根据实际 Accessibility 结构继续适配。
+
+在本次 WeChat 4.1.13 实机验收中，独立目标群窗口的消息列表 ID 为 `chat_message_list`；群成员侧栏另有列表，因此本机配置已显式指定该 ID。其他版本应重新核实。转发详情可单独指定 `capture.mac_forward_list_identifier`，不继承群消息列表 ID。
+
+## 无需手动打开的转发读取（实验）
+
+`capture.mac_forward_interaction = "activate_click"` 配合 `auto_expand_forward = true`，会在输入空闲后自动切到精确群窗口、打开卡片、读取正文、关闭详情并恢复原应用与鼠标位置。这条路径会短暂使用前台；默认仍为 `ax_press`，不会主动切换应用。当前只在本机“邮件测试”群的右侧自发卡片完成实测，左侧气泡、其他版本和完整历史仍需分别验证。配置、测试证据与边界见 [Mac 转发卡片自动读取实验](macos-forward-background.md)。
+
+启动、检查和停止步骤见 [部署指南](deployment.md)。该节使用项目源码及独立测试配置；源码与已安装服务可能使用不同 Python 包和辅助程序；更新时须同时核对代码、原生程序和配置路径，不能只修改配置就认定更新完成。
 
 ## 开始、停止与重启
 
-以下命令安装 LaunchAgent 并立即开始：
+安装器完成后服务尚未启动；下列 `install` 命令显式安装并启动预览服务：
 
 ```bash
-bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" install --send
+bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" install
 bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" status
 bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" restart
 bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" stop
@@ -84,6 +94,17 @@ bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command"
 
 后续实机还需验证：关闭/重新打开群窗口后自动恢复，服务异常退出后 LaunchAgent 拉起，重启不重复生成活动/队列，资源占用，QQ 邮件实际送达。`verify --observe-seconds` 检查服务实例和采集心跳，不证明历史完整，也不计算消息漏收率。
 
-只采集已加载、与目标消息列表视口相交的 Accessibility 行。定期核对默认 15 秒，失联等待并重新绑定；AX 事件可提前唤醒。开启尾部跟随只尝试 `AXScrollToVisible`，不保证加载全部历史。原始发送者与发送时间没有可靠证据时仍为未知。默认关闭转发自动展开；可选实现尚需 Mac 实测，附件/OCR、全历史补齐不在本版内。
+只采集已加载、与目标消息列表视口相交的 Accessibility 行。定期核对默认 15 秒，失联等待并重新绑定；AX 事件可提前唤醒。开启尾部跟随只尝试 `AXScrollToVisible`，不保证加载全部历史。原始发送者与发送时间没有可靠证据时仍为未知。正式服务默认关闭转发自动展开；当前源码的 `activate_click` 已完成本机右侧自发卡片实测，其他布局及完整历史仍需分别验证。附件/OCR、全历史补齐不在本版内。
+
+需要读取手动打开的转发详情时，先从目标群当前捕获结果中选定父卡片 ID，再由用户手动打开那张卡片。Mac 的 `forward` 命令重新核对父卡片的进程、行号和内容摘要，只读取已打开的唯一详情窗口，不点击、激活、输入、滚动或关闭窗口：
+
+```bash
+"$HOME/Library/Application Support/WeChatLectureTracker/.venv/bin/python" -m wechat_tracker \
+  --config "$HOME/Library/Application Support/WeChatLectureTracker/config.toml" \
+  --db /absolute/path/to/isolated-acceptance.sqlite3 \
+  forward --parent-id '<当前捕获的父卡片ID>' --save /absolute/path/to/detail.jsonl
+```
+
+通用“群聊的聊天记录”标题不能独立证明来源群；结果保留人工显式绑定、`source_group_verified=false` 和历史不完整标记。该命令只分析并生成预览，不发邮件。详情未打开、父卡片移动后无法核对、窗口或列表不唯一时停止，不尝试其他界面操作。
 
 日常需保留已登录、微信在线的专用会话。服务默认通过 caffeinate 防止空闲系统休眠；手动休眠、锁屏、微信退出、最小化与系统授权变化仍可能造成采集缺口，健康记录会保留可观测的中断。

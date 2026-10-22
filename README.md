@@ -1,130 +1,170 @@
-# 微信群讲座捕获、分析与邮箱提醒
+# 微信群讲座通知助手
 
-Mac接续开发请先读 **[HANDOFF.md](HANDOFF.md)**。完整源码、测试和文档在本私密仓库；安装包与开发归档见 [0.4.0交接Release](https://github.com/Fui2311/wechat_tracking/releases/tag/v0.4.0)。
+本地采集指定微信群的可读消息，识别讲座与学术报告，保留原文，并生成邮件通知与日历文件。提供命令行和浏览器控制台，支持 macOS Accessibility、Windows UIAutomation 和离线 JSONL 输入。
 
-指定群：**2026级计算机研究生通知群**。本项目已实现 Python 本地框架：Windows 微信消息采集、合并转发子消息标准化、讲座信息提取、SQLite 去重与版本、邮件任务队列、活动前提醒、中文邮件预览和 ICS 导出。
+**正式版本：1.0.0 · Python 3.11+ · 核心运行时无第三方 Python 依赖。** 安装包见 [GitHub Releases](https://github.com/Fui2311/wechat_tracking/releases)。
 
-源码已连接私有仓库 [Fui2311/wechat_tracking](https://github.com/Fui2311/wechat_tracking)。当前为 `0.4.0`：按手动报名方案，识别与通知只保留**讲座摘要、报名截止时间、讲座活动时间**。摘要从主题及简介/内容摘取；缺失时间标注未注明，部分时间保留时间片段并标待核实。地点、主讲、到场和名单资格不参与排程。原有功能包括长驻采集、窗口就绪自动接入、用户会话服务与崩溃恢复、本机加密 QQ 邮箱配置，以及独立 macOS 源码安装包。运行数据、SMTP凭据和本机配置不进入Git。
+默认使用本地规则、仅预览邮件；启用 LLM 后才向所配置的兼容接口发送待分析正文，显式启用发信后才投递 SMTP。不会向微信群发送消息或代替用户报名。
 
-日常使用见 [Windows 服务管理](docs/service.md)，Mac 安装及后续实机验收见 [macOS 独立版本](docs/macos.md)。本机服务已部署；QQ 邮箱按用户选择稍后配置，目前只预览和排队。Mac 原生编译与运行待实机验证。
+## 功能与边界
 
-```powershell
-python -m wechat_tracker --config config.local.toml service status
-python -m wechat_tracker --config config.local.toml service restart
+- 发现讲座相关消息即生成通知，不以时间缺失、取消、入选资格或置信度阻止通知；报名开始时间、活动时间、链接均以原文为依据。
+- 默认场地策略只接收石牌校区及未明确举办校区的消息；明确在其他校区举办的活动不通知。履历、主办单位中的校区不作为举办地点。
+- 规则模式保留完整可读原文；LLM 模式展示提取结果及原文，接口失败自动回退规则。模型开关、地址和密钥可在控制台配置。
+- SQLite 保存原始消息、采集指纹、通知记录与持久队列；重复采集去重，发送失败退避重试，预览不会把任务记为已发送。
+- 控制台显示采集到的讲座/非讲座消息、服务状态、邮件预览、队列、历史只读库和 ICS 导出；支持探测并切换精确群名。
+
+采集依赖已登录的本机桌面和可读的目标群窗口，只覆盖已加载的可访问消息。锁屏、系统休眠、未加载历史、微信版本变化及突发大量消息可能造成缺口。转发卡片摘要不等于正文；自动展开是可选实验功能，会按配置短暂使用前台。附件只保留可读元数据，不执行 OCR、不读取未下载文件。SMTP 采用至少一次投递，服务器接受后进程意外退出可能导致重复邮件。
+
+## 快速开始
+
+### 源码安装与离线体验
+
+```bash
+git clone https://github.com/Fui2311/wechat_tracking.git
+cd wechat_tracking
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install .
+wechat-track --version
+wechat-track init demo.local.toml --platform jsonl
+wechat-track --config demo.local.toml demo
+wechat-track --config demo.local.toml web --open
 ```
 
-也可双击 `scripts/restart-monitor.cmd`。保持微信登录、目标群独立窗口非最小化；登录任务会等待窗口就绪并自动绑定。只采集已加载视口，不能保证锁屏、未加载历史与突发大量消息的完整接收。
+Windows PowerShell 用 `python` 创建环境，激活命令为 `.\.venv\Scripts\Activate.ps1`。也可始终使用 `.\.venv\Scripts\python.exe -m wechat_tracker ...`。私有仓库需先通过自己的 GitHub 账号认证。
 
-## 先看方案和复用结论
+`demo` 使用包内合成/人工转写样例，固定走本地规则，写入配置目录下的 `state/demo.sqlite3`、`demo-email-preview.txt` 和 `demo.ics`，不访问微信、LLM 或 SMTP。它验证软件流程，不能证明桌面采集或邮件送达。
 
-- [当前监控、语义识别与提醒机制说明](docs/监控与语义识别及提醒机制说明.md)：包含运行快照、流程图、规则识别与提醒计算样例；另有[Word版](docs/监控与语义识别及提醒机制说明.docx)和[PDF版](output/pdf/监控与语义识别及提醒机制说明.pdf)。
-- [方案与模块契约](docs/architecture.md)
-- [GitHub 项目源码核查](docs/github-reuse.md)：先检查现有模块，再按本机微信 4.1.15.13 的实际结构选择适配方式。
-- [Windows 采集与实测边界](docs/capture.md)
-- [自动展开转发：使用方法与验证边界](docs/automatic-forward.md)
-- [邮箱配置](docs/email.md)
-- [验证记录](docs/verification.md)
+安装 wheel 后可在任意工作目录使用 `wechat-track init` 创建配置；不会覆盖已有文件。下列命令都显式指定配置，避免误用本机另一份安装的配置。
 
-个人微信 4.x 的控件可访问性会随版本和账号变化。当前机器已验证独立群窗口正文可读；合并转发窗口也已通过实际界面读取到内部正文、文件与图片卡片。自动轮询只读目标群的已加载消息，不能保证关机、锁屏、未加载历史或瞬间大量消息的完整接收。
+### macOS 实时部署
 
-## 快速运行
+推荐下载 Release 中的 `WeChatLectureTracker-macOS-1.0.0.zip`，解压后执行：
 
-在本目录使用 Python **3.11+**，核心无第三方依赖。Windows 采集使用系统 PowerShell 和 .NET UIAutomation，无需安装完整机器人框架。
-
-```powershell
-python -m wechat_tracker demo
-python -m wechat_tracker probe
-python -m wechat_tracker watch --once --include-existing
-python -m wechat_tracker events
-python -m wechat_tracker tick
+```bash
+python3 mac/verify-package.py .
+bash mac/install.command
 ```
 
-`demo` 使用人工转写的第一张截图和独立 `state/demo.sqlite3`；生成 `state/demo-email-preview.txt`、`state/demo.ics`。截图只有 `12:55`，样例中的消息日期是为回放设定的 2026-10-15；真实采集不会这样补日期。`tick` 只预览到期邮件，**不会把任务标为已发**。重复预览相同内容是预期行为。
+需先安装 Python 3.11+ 和 Apple Command Line Tools（`xcode-select --install`）。安装器在本机编译、签名 Swift 辅助程序，保留已有配置和数据，不自动发信。它是源码安装包，无需另一台 Windows 主机。
 
-实时采集需要在微信中将目标群打开为独立窗口并保持非最小化。首次 `watch` 默认只建立现有可见消息的基线；`--include-existing` 用于第一次也分析这些消息。之后捕获到的新内容进入分析流程。
+安装后编辑 `~/Library/Application Support/WeChatLectureTracker/config.toml` 中的精确 `group`；在系统辅助功能设置中授权采集 App，将目标群打开为独立、非最小化窗口：
 
-持续预览运行：
-
-```powershell
-python -m wechat_tracker watch --interval 15
+```bash
+bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" authorize
+bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" verify --offline
+bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" probe
+bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" install
+bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" web --open
 ```
 
-## 合并转发记录检查
+`probe` 成功后再启动预览服务。完整安装、升级、回滚和故障排查见 [部署指南](docs/deployment.md) 与 [macOS 说明](docs/macos.md)。源码开发者先运行 `python scripts/build-mac-package.py`，再从生成的 ZIP 安装；源码工作区不带安装清单。
 
-转发卡片的几行摘要不能代表完整内容。当前实现能读取**已经打开的聊天记录详情窗口**，把内部消息拆成 `children` 后逐条分析；也可按下述方式开启实验性的父卡片自动展开。未展开的嵌套卡片、未下载文件和图片正文保留待补全状态。不会把转发时间套到原始子消息上。
+### Windows 实时部署
+
+在已安装项目的环境中创建配置，填入精确群名：
 
 ```powershell
-python -m wechat_tracker watch --interval 15 --include-existing --expand-forward
+wechat-track init config.local.toml --platform windows --group "你的精确群名"
+wechat-track --config config.local.toml probe
+wechat-track --config config.local.toml watch --once --include-existing
+wechat-track --config config.local.toml service install
+wechat-track --config config.local.toml service status
+wechat-track --config config.local.toml web --open
 ```
 
-启动后把**目标群独立窗口置于前台**，保持卡片完整可见并停止鼠标键盘操作至少3秒。程序仅对核对过的群卡片执行单击，读取自己新开的详情，然后关闭该详情并核对返回原群。已有详情窗口、遮挡或用户操作变化会停止展开；默认不抢焦点。每轮最多3张卡片、每张最多5页；没有可靠滚动接口时明确保留不完整状态。完成结果持久缓存，失败退避重试。
+需要已登录的 Windows 微信、交互式用户会话、PowerShell/.NET UIAutomation 和可读的目标群独立窗口。`service install` 创建当前用户登录任务。Linux 可运行离线处理、测试和本地控制台，不提供 Linux 微信采集适配器。参见 [Windows 采集](docs/capture.md) 与 [服务管理](docs/service.md)。
 
-0.3.0已在本机微信4.1.15.13通过原生驱动和常驻服务验证自动打开、读取、关闭并返回原群；此次读取1条可访问正文，仍标记历史不完整。其他客户端版本、全历史、附件和嵌套卡片仍需分别验证。详见[自动转发文档](docs/automatic-forward.md)。
+## 配置与日常命令
 
-已打开详情后的只读检查（`--parent-id` 表示你明确绑定到目标群的本地来源 ID）：
+配置模板：Windows [config.example.toml](config.example.toml)，macOS [mac/config.example.toml](mac/config.example.toml)。`init` 自动选择平台，也支持显式 `--platform`。
 
-```powershell
-python -m wechat_tracker forward --parent-id my-forward-card-001 --save state/forward.jsonl
+| 配置项 | 用途与默认值 |
+| --- | --- |
+| `group` | 要采集的完整精确群名，白名单校验 |
+| `data_dir` | 相对于配置文件目录的状态目录，默认 `state` |
+| `processing_mode` | `rules`（默认）或 `llm` |
+| `llm_base_url` / `llm_model` | 兼容 Chat Completions 的基础地址与模型名称 |
+| `llm_api_key_env` | 密钥环境变量名；控制台保存的独立 `.llm-key` 文件优先 |
+| `reminder_minutes` | 默认 `[]`，关闭活动前定时提醒 |
+| `[capture]` | `macos_ax` / `windows_uia` / `jsonl`，辅助程序路径和转发策略 |
+| `[service]` | 核对间隔、调度间隔、首次是否分析现有可见消息、备份和防系统休眠 |
+| `[email]` | SMTP 主机、端口、TLS 模式及凭据环境变量名；不写明文授权码 |
+
+```bash
+wechat-track --config config.local.toml events
+wechat-track --config config.local.toml outbox
+wechat-track --config config.local.toml tick
+wechat-track --config config.local.toml calendar state/lectures.ics
+wechat-track --config config.local.toml service status
+wechat-track --config config.local.toml service stop
+wechat-track --config config.local.toml service start
 ```
 
-本次真实读取的数据也可重复回放：
+前台 `watch` 首次默认只建立可见消息基线，`--include-existing` 才处理已有消息；后台服务模板的 `service.include_existing=true`，首次会分析当前可见消息。请选择符合需要的行为。不要对同一数据库同时运行多个发信进程。
 
-```powershell
-python -m wechat_tracker --db state/forward-live.sqlite3 forward --parent-id manual-forward-card-20261015-001 --snapshot state/forward-live-snapshot.json
+控制台只监听本机 `127.0.0.1:8088`，校验 Host/Origin；关闭控制台不停止独立的监控服务。切换群名时先探测新窗口、停止旧实例并分离数据目录；新群保持停止，需显式点击启动预览。旧群历史保留只读。
+
+### 邮箱与模型
+
+`email setup` 会要求在本机隐藏输入授权码，并实际发送一封配置测试邮件；macOS 用 Keychain、Windows 用当前用户 DPAPI 保存凭据。日常开启发信需要显式 `--send` 或控制台“启动并发信”：
+
+```bash
+wechat-track --config config.local.toml email setup
+wechat-track --config config.local.toml service install --send
 ```
 
-检查结果见 [真实转发记录报告](docs/forward-inspection.md)，邮箱摘要在 `state/forward-email-preview.txt`。原生读取器的新增详情模式已做语法和模拟测试；本次真实窗口通过 computer-use 读取，再验证相同标准化与分析流程。
+LLM 设置可在控制台修改并于下一条新消息生效；默认规则模式不调用网络。控制台的模型测试只处理输入框里的文字，不入库、不入队、不发信，但会调用所选模型接口。详见 [邮箱配置](docs/email.md) 和 [模型处理](docs/llm-processing.md)。
 
-标准 JSONL 可直接导入，不依赖桌面控件：
+## 项目模块与结构
 
-```powershell
-python -m wechat_tracker --db state/forward-demo.sqlite3 ingest examples/forward.jsonl --now 2026-10-15T13:00:00+08:00
-python -m wechat_tracker --db state/forward-demo.sqlite3 events
+```text
+wechat_tracker/
+├── domain/               # 纯规则：消息校验、稳定指纹、时间、策略版本
+├── application/          # 用例：采集入库、通知身份/版本、重算、队列调度
+│   ├── ports.py          # Repository / MessageProcessor / MailSender 契约
+│   ├── tracker.py        # 用例协调器，注入仓储、分析器、发信器和时钟
+│   ├── events.py         # 通知身份、旧活动版本兼容与入队规则
+│   └── delivery.py       # 领取任务、预览、过期、重试与投递记账
+├── persistence/          # SQLite 仓储实现与原子领取 SQL
+├── extraction/           # 设置/密钥持久化、LLM HTTP 适配、规则回退管线
+├── presentation/         # 纯文本/HTML 通知格式，预览和投递共用
+├── console/              # HTTP 适配、只读查询、服务发现、公开状态投影
+├── analyzer.py           # 本地中文识别、时间与报名信息、场地策略
+├── store.py              # SQLite 连接、建表、完整性检查、校验备份
+├── capture.py / macos.py # Windows UIA / macOS AX 标准化与精确来源校验
+├── stream.py / watcher.py# 原生帧传输、卡片展开缓存与轮询补全
+├── service.py            # 常驻进程、控制通道、锁、健康状态与备份
+├── autostart.py          # macOS LaunchAgent / Windows 登录任务
+├── credentials.py       # Keychain / DPAPI 与邮箱授权
+├── engine.py             # 兼容业务入口，集中装配默认适配器
+├── processing.py / web.py# 稳定公共入口，转到各自模块
+├── notify.py             # SMTP/TLS 传输，兼容导出格式化函数
+├── bootstrap.py / cli.py # 配置初始化与命令行入口
+└── resources/            # Swift、PowerShell、合成样例、配置模板、Web 静态文件
+mac/                      # Mac 源码安装器、管理脚本、原生验证
+scripts/                  # 构建、安装包验收及开发辅助脚本
+tests/                    # 行为回归、依赖边界与适配器测试
+docs/                     # 架构、部署、平台说明及历史验收记录
+.github/workflows/        # 多平台回归、打包与安装后冒烟检查
 ```
 
-`examples/forward.jsonl` 是合成测试样例。实际读取结果保存在 `state/`，不混入源码示例。
+业务层依赖 `ports.py` 中的结构化接口；SQLite 和 SMTP 的选择由 `Engine` 装配，调用方可注入自己的实现。`application/` 不导入桌面采集、SQLite、HTTP、配置持久化或 SMTP。Web 查询以 SQLite 只读连接读取，不能通过查看历史库触发建表或重算。原有 `Engine`、处理接口、命令行、Web API 和 SQLite 表格式继续兼容。
 
-## 开启邮箱发送
+数据流程与扩展契约见 [架构说明](docs/architecture.md)。项目使用 Python 标准库与系统接口，没有直接依赖 pywechat/wxauto 等机器人框架；历史调研见 [复用核查](docs/github-reuse.md)。
 
-首次使用复制示例为 `config.local.toml`；已有本机配置时保留原文件。默认 QQ 邮箱 SSL 465，按 [邮箱文档](docs/email.md) 在本机隐藏输入授权码，测试成功后加密保存。不要把授权码粘贴到聊天或写入源码。
+## 开发、验证与发布
 
-```powershell
-Copy-Item -LiteralPath config.example.toml -Destination config.local.toml
-python -m wechat_tracker --config config.local.toml email setup
-python -m wechat_tracker --config config.local.toml service install --send
-python -m wechat_tracker --config config.local.toml tick
-python -m wechat_tracker --config config.local.toml tick --send
-python -m wechat_tracker --config config.local.toml watch --interval 15 --send
-```
-
-仅带 `--send` 的命令会实际连接 SMTP。默认在发现时生成三项摘要，再于**讲座开始时间**前 24 小时、60 分钟提醒；报名截止仅展示，不单独建立截止提醒，可通过 `reminder_minutes` 修改。已错过的节点不在新建任务时补发；恢复运行时同一活动的多条积压提醒合并，超过开始时间的临近提醒失效。
-
-```powershell
-python -m wechat_tracker outbox
-python -m wechat_tracker calendar state/lectures.ics
+```bash
+python -m pip install -e '.[dev]'
+python -m ruff check wechat_tracker tests mac scripts
 python -m unittest discover -s tests -v
+python -m build
+python scripts/check-release.py
+python scripts/build-mac-package.py
 ```
 
-取消/改期关联唯一原事件后提升版本，废弃旧任务；SMTP 失败采用退避重试，超过 `max_attempts` 进入 `dead`。队列状态可通过 `outbox` 查看，故障后修复配置可重新导入/建立新的通知；目前未提供失败任务管理界面。
+`check-release.py` 在仓库外创建干净虚拟环境，从 wheel 安装后核对资源、配置初始化、样例去重、邮件预览、ICS 和 HTTP API，禁止调用微信、LLM 或 SMTP。CI 在 Linux、macOS、Windows 运行回归；另检查源码分发包可重新构建及 Mac 安装 ZIP 的清单。桌面窗口、权限、转发和 SMTP 实际送达需要在目标机器单独验收，CI 成功不代表这些物理条件已经满足。
 
-## 从旧方案升级
-
-0.4.0 会暂停发送旧方案的任务快照。未发信数据库需先停服务，再从保存的原始消息重算；命令会建立校验备份，以事务保留原文、采集指纹及旧任务审计。已发送或发送中记录会阻止自动重算，避免重复投递。本机生产库已完成迁移。
-
-```powershell
-python -m wechat_tracker --config config.local.toml service stop
-python -m wechat_tracker --config config.local.toml rebuild-analysis
-python -m wechat_tracker --config config.local.toml service start --send
-```
-
-最后一行保持原来的发送模式；仅预览的实例不加 `--send`。
-
-## 当前边界
-
-- 已实现规则分析；模型分析是架构扩展点，目前不调用外部模型、不上传整群原文。
-- 活动时间歧义、主题缺失、未展开转发只生成待核实线索。缺地点、主讲、名单或报名截止不阻断已明确的活动排程。报名由用户手动完成，系统不推断报名成功。
-- 目前不自动下载 PDF/XLSX、不识别图片正文、不证明本人是否报名成功；附件名只提供线索。
-- 自动逐卡展开已通过本机单卡原生验收；嵌套详情遍历和主群全历史翻页尚未实现。
-- SQLite 和 `state/` 含本地消息内容，请保存在你自己的设备。邮件正文固定三项，不另附来源栏目、原文摘录或群文件；来源与证据保留在本地用于审计。
-- 全天运行使用 `service install --send`，不要另开 `watch --send` 发送同一数据库。SMTP 已接受邮件但进程来不及记账时，恢复可能重复发送；这是至少一次投递的边界。
-- ICS 是手动导出的文件，不是自动同步服务；取消事件保留同 UID 和更新版本，但再次导入的具体更新行为取决于日历应用。
+版本变更见 [CHANGELOG.md](CHANGELOG.md)。`state/`、本机配置、`.env`、授权码、模型密钥、聊天数据库和构建产物均不应进入 Git；发布脚本仅打包明确允许的源码与资源。旧版升级及数据库恢复步骤见 [部署指南](docs/deployment.md)。历史交接和实测文档保留原日期，其运行快照不代表当前服务状态。

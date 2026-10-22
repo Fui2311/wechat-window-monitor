@@ -165,8 +165,8 @@ class ForwardWatcherTests(unittest.TestCase):
         self.assertEqual(event["start_at"], "2026-10-16T19:00:00+08:00")
         self.assertNotIn("arrival_at", event)
         reminders = [job for job in self.store.jobs() if job["reason"] == "reminder"]
-        self.assertEqual(reminders[-1]["due_at"], "2026-10-16T10:00:00+00:00")
-        self.assertEqual(len(self.store.jobs()), 3)
+        self.assertEqual(reminders, [])
+        self.assertEqual(len(self.store.jobs()), 1)
         self.assertEqual(len(self.engine.dispatch(NOW)), 1)
 
     def test_cache_survives_database_close_and_restart(self):
@@ -209,6 +209,110 @@ class ForwardWatcherTests(unittest.TestCase):
         expand.assert_not_called()
         self.assertEqual(rows[0]["children"], partial["children"])
 
+    def test_mac_busy_input_defers_without_growing_failure_backoff(self):
+        self.config["capture"]["source"] = "macos_ax"
+        message = dict(card(), source="macos_ax")
+        with patch("wechat_tracker.macos.expand_forward", side_effect=CaptureError("user_busy")) as expand:
+            for seconds in (0, 3, 6, 9):
+                rows, diagnostics = self.enrich([message], include_existing=True,
+                                               now=NOW + timedelta(seconds=seconds))
+                cached = self.store.db.execute("SELECT * FROM forward_reads").fetchone()
+                self.assertEqual((cached["status"], cached["attempts"]), ("deferred", 0))
+                self.assertEqual(parse_time(cached["next_attempt_at"]), NOW + timedelta(seconds=seconds + 3))
+                self.assertEqual(diagnostics[0]["status"], "deferred")
+                self.assertEqual(rows, [message])
+            self.enrich([message], include_existing=True, now=NOW + timedelta(seconds=10))
+        self.assertEqual(expand.call_count, 4)
+        with patch("wechat_tracker.macos.expand_forward", return_value=expanded(message)) as expand:
+            rows, _ = self.enrich([message], include_existing=True, now=NOW + timedelta(seconds=12))
+            self.engine.capture_snapshot(rows, include_existing=True, now=NOW + timedelta(seconds=12))
+            repeated, _ = self.enrich([message], include_existing=True, now=NOW + timedelta(seconds=15))
+            self.assertEqual(self.engine.capture_snapshot(repeated, now=NOW + timedelta(seconds=15)), [])
+        expand.assert_called_once()
+        self.assertEqual(len(self.store.events()), 1)
+        self.assertEqual(len(self.store.jobs()), 1)
+
+    def test_mac_read_errors_keep_failure_backoff_and_stop_the_batch(self):
+        self.config["capture"]["source"] = "macos_ax"
+        for reason in ("card_occluded", "parent_changed"):
+            with self.subTest(reason=reason):
+                message = dict(card(reason), source="macos_ax")
+                other = dict(card(reason + "-other"), source="macos_ax")
+                with patch("wechat_tracker.macos.expand_forward", side_effect=CaptureError(reason)) as expand:
+                    _, diagnostics = self.enrich([message, other], include_existing=True)
+                    self.enrich([message], include_existing=True, now=NOW + timedelta(seconds=15))
+                expand.assert_called_once()
+                self.assertEqual([d["status"] for d in diagnostics], ["retry", "deferred"])
+                cached = self.store.db.execute("SELECT * FROM forward_reads WHERE parent_id=?", (reason,)).fetchone()
+                self.assertEqual((cached["status"], cached["attempts"]), ("retry", 1))
+                self.assertEqual(parse_time(cached["next_attempt_at"]), NOW + timedelta(seconds=30))
+
+    def test_mac_only_explicit_postpone_waits_five_minutes_activity_retries_when_idle(self):
+        for reason in ("user_postponed", "user_active_during_notice", "user_interrupted"):
+            with self.subTest(reason=reason):
+                with self.store.db:
+                    self.store.db.execute("DELETE FROM forward_reads")
+                message = dict(card(reason), source="macos_ax")
+                delay = 300 if reason == "user_postponed" else 3
+                with patch("wechat_tracker.macos.expand_forward", side_effect=CaptureError(reason)) as expand:
+                    _, diagnostics = self.enrich([message], include_existing=True)
+                    self.enrich([message], include_existing=True, now=NOW + timedelta(seconds=delay - 1))
+                    expand.assert_called_once()
+                    self.enrich([message], include_existing=True, now=NOW + timedelta(seconds=delay))
+                    self.assertEqual(expand.call_count, 2)
+                cached = self.store.db.execute("SELECT * FROM forward_reads WHERE parent_id=?", (reason,)).fetchone()
+                self.assertEqual((cached["status"], cached["attempts"]), ("deferred", 0))
+                self.assertEqual(diagnostics[0]["status"], "deferred")
+
+    def test_mac_postpone_pauses_other_new_cards_in_the_same_group_across_restart(self):
+        message = dict(card("postponed"), source="macos_ax")
+        other = dict(card("new-after-postpone"), source="macos_ax")
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "tracker.sqlite3"
+            store = Store(database)
+            with patch("wechat_tracker.macos.expand_forward", side_effect=CaptureError("user_postponed")):
+                enrich_forwards([message], store, self.config, include_existing=True, now=NOW)
+            store.close()
+            store = Store(database)
+            try:
+                with patch("wechat_tracker.macos.expand_forward", return_value=expanded(other)) as expand:
+                    rows, diagnostics = enrich_forwards([other], store, self.config, include_existing=True,
+                                                        now=NOW + timedelta(seconds=299))
+                    expand.assert_not_called()
+                    self.assertEqual(rows, [other])
+                    self.assertEqual(diagnostics[0]["status"], "deferred")
+                    enrich_forwards([other], store, self.config, include_existing=True,
+                                    now=NOW + timedelta(seconds=300))
+                    expand.assert_called_once()
+            finally:
+                store.close()
+
+    def test_mac_legacy_partial_cache_is_reused_after_restart_even_after_failed_reread(self):
+        message = dict(card("legacy"), source="macos_ax")
+        partial = expanded(message, complete=False)
+        # An old installation may have scheduled a retry, or kept useful body
+        # evidence while marking a failed retry. Both must remain read-once.
+        for status in ("partial", "retry"):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                database = Path(directory) / "tracker.sqlite3"
+                old = Store(database)
+                with old.db:
+                    old.db.execute("INSERT INTO forward_reads VALUES (?,?,?,?,?,?,?)",
+                                   (GROUP, message["id"], status, json.dumps(partial), 2,
+                                    "2026-10-15T00:00:00+00:00", "detail_open_timeout"))
+                old.close()
+                reopened = Store(database)
+                try:
+                    with patch("wechat_tracker.macos.expand_forward") as expand:
+                        rows, diagnostics = enrich_forwards([message], reopened, self.config,
+                                                           include_existing=True, now=NOW + timedelta(days=1))
+                    expand.assert_not_called()
+                    self.assertEqual(rows[0]["children"], partial["children"])
+                    self.assertEqual(diagnostics, [])
+                    self.assertTrue(rows[0]["incomplete"])
+                finally:
+                    reopened.close()
+
     def test_per_poll_card_limit_does_not_drop_remaining_cards(self):
         self.config["capture"]["forward_max_cards"] = 1
         with patch("wechat_tracker.watcher.expand_forward", side_effect=lambda config, row: expanded(row)) as expand:
@@ -233,16 +337,24 @@ class ForwardWatcherTests(unittest.TestCase):
         other["children"][0]["source_meta"] = {"runtime_id": [42, 999]}
         self.assertTrue(self.engine.ingest(other, NOW)["duplicate"])
         self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
-        self.assertEqual(len(self.store.jobs()), 3)
+        self.assertEqual(len(self.store.jobs()), 1)
 
     def test_invalid_automation_configuration_is_rejected(self):
         for setting in ("auto_expand_forward = 'true'", "forward_max_cards = 0", "forward_max_pages = 21",
-                        "forward_idle_seconds = 0", "forward_partial_retry_seconds = 1", "forward_timeout_seconds = 61"):
+                        "forward_idle_seconds = 0", "forward_partial_retry_seconds = 1", "forward_timeout_seconds = 61",
+                        "forward_notice_seconds = 0", "forward_notice_seconds = 16", "forward_postpone_seconds = 5",
+                        "mac_forward_interaction = 'unrestricted'", "mac_forward_card_side = 'guess'"):
             with self.subTest(setting=setting), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "config.toml"
                 path.write_text(f'group = "{GROUP}"\n[capture]\n{setting}\n', encoding="utf-8")
                 with self.assertRaises(ValueError):
                     load_config(path)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            path.write_text(f'group = "{GROUP}"\n[capture]\nmac_forward_interaction = "activate_click"\n'
+                            'forward_notice_seconds = 10\nforward_timeout_seconds = 15\n', encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_config(path)
 
 
 if __name__ == "__main__":

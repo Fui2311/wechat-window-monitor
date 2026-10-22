@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>微信群讲座追踪系统 · 原生控制台</title>
+  <link rel="stylesheet" href="/app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2307c160'><path d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'/></svg>">
+</head>
+<body>
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-container">
+      <div class="brand-section">
+        <div class="brand-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            <path d="M8 9h8"></path>
+            <path d="M8 13h5"></path>
+          </svg>
+        </div>
+        <div class="brand-title">
+          <h1>
+            讲座监控控制台
+            <span id="serviceStatusBadge" class="badge badge-neutral">
+              <span class="status-indicator pulse-gray"></span>
+              <span id="serviceStatusText">检查中...</span>
+            </span>
+          </h1>
+          <span class="brand-sub">微信群讲座消息捕获与邮箱通知 · 1.0.0</span>
+          <span style="font-size: 11px; color: var(--text-tertiary); margin-left: 8px;">(macOS AX 读取当前微信独立窗口可见消息，不代表完整历史)</span>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <div class="badge badge-group" title="当前监控的目标微信群">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+          <span id="targetGroupName">--</span>
+          <button id="btnHeaderSwitchGroup" class="btn btn-xs btn-secondary" style="margin-left: 6px;">切换群</button>
+        </div>
+
+        <select id="autoRefreshSelect" class="select-input" title="自动刷新频率">
+          <option value="0">停止刷新</option>
+          <option value="3000">3秒刷新</option>
+          <option value="5000" selected>5秒刷新</option>
+          <option value="10000">10秒刷新</option>
+        </select>
+
+        <button id="themeToggleBtn" class="btn btn-icon" title="切换深浅主题">
+          <svg id="themeIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+        </button>
+
+        <button id="manualRefreshBtn" class="btn btn-icon" title="立即刷新数据">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+        </button>
+
+        <button id="btnCloseConsole" class="btn btn-sm btn-outline-danger" title="关闭控制台后台服务（微信群监控保持原状态）">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
+            <line x1="12" y1="2" x2="12" y2="12"></line>
+          </svg>
+          关闭控制台
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-container">
+    <!-- Console Stopped Banner (Shown when user explicitly shuts down the web console) -->
+    <div id="consoleStoppedBanner" class="console-stopped-banner" style="display: none;">
+      <div class="banner-left">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <div>
+          <strong style="font-size: 14px;">网页控制台已安全关闭</strong>
+          <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">
+            微信群监控保持原状态；以下内容是关闭前的最后数据，后台操作已禁用。
+          </div>
+        </div>
+      </div>
+      <div class="banner-right">
+        <span>重新打开：运行快捷启动 <code>wxconsole</code>（或 <code>mac/web.command</code>），再刷新本页。</span>
+      </div>
+    </div>
+
+    <!-- Offline Banner -->
+    <div id="offlineBanner" class="offline-banner" style="display: none;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="8" x2="12" y2="12"></line>
+        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+      </svg>
+      <span id="offlineBannerText">后台服务连接断开或异常。请检查后端控制台服务是否正在运行。</span>
+    </div>
+
+    <!-- KPI Summary Grid -->
+    <section class="kpi-grid">
+      <!-- Card 1: Service Status -->
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span>监控服务状态</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+            <line x1="6" y1="6" x2="6.01" y2="6"></line>
+            <line x1="6" y1="18" x2="6.01" y2="18"></line>
+          </svg>
+        </div>
+        <div class="kpi-body">
+          <span id="kpiServiceState" class="kpi-value">--</span>
+        </div>
+        <div class="kpi-subtext">
+          <span id="kpiServiceDetail">PID: -- · 心跳: --</span>
+        </div>
+      </div>
+
+      <!-- Card 2: Capture Stats -->
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span>最近采样可见消息</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+        </div>
+        <div class="kpi-body">
+          <span id="kpiObservedCount" class="kpi-value">0</span>
+          <span style="font-size: 13px; color: var(--text-secondary);">条可见</span>
+        </div>
+        <div class="kpi-subtext">
+          <span id="kpiCaptureDetail">采样: 0 · 视口断档: 0 次</span>
+        </div>
+      </div>
+
+      <!-- Card 3: Events -->
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span>讲座相关消息</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="16" y1="2" x2="16" y2="6"></line>
+            <line x1="8" y1="2" x2="8" y2="6"></line>
+            <line x1="3" y1="10" x2="21" y2="10"></line>
+          </svg>
+        </div>
+        <div class="kpi-body">
+          <span id="kpiEventsCount" class="kpi-value">0</span>
+          <span style="font-size: 13px; color: var(--text-secondary);">条消息</span>
+        </div>
+        <div class="kpi-subtext">
+          <span id="kpiEventsDetail">石牌校区或未注明校区的讲座可通知</span>
+        </div>
+      </div>
+
+      <!-- Card 4: Outbox & Email -->
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span>通知发件队列</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+            <polyline points="22,6 12,13 2,6"></polyline>
+          </svg>
+        </div>
+        <div class="kpi-body">
+          <span id="kpiOutboxCount" class="kpi-value">0</span>
+          <span style="font-size: 13px; color: var(--text-secondary);">条任务</span>
+        </div>
+        <div class="kpi-subtext">
+          <span id="kpiOutboxDetail">待发: 0 · 已投递: 0 · 模式: 仅预览</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Operation Control Bar -->
+    <section class="action-bar">
+      <div class="action-bar-left">
+        <span style="font-size: 13px; font-weight: 600; color: var(--text-secondary);">微信监控控制：</span>
+        <button id="btnStartService" class="btn btn-primary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+          启动监控 (预览)
+        </button>
+        <button id="btnStartSendService" class="btn btn-secondary" title="真实连接QQ邮箱SMTP投递通知">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+          发信模式启动
+        </button>
+        <button id="btnStopService" class="btn btn-danger" title="停止后台微信消息监控服务">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect>
+          </svg>
+          停止监控
+        </button>
+        <button id="btnRestartService" class="btn btn-secondary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+          </svg>
+          重启
+        </button>
+      </div>
+
+      <div class="action-bar-right">
+        <button id="btnProbe" class="btn btn-secondary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          运行窗口探针 (Probe)
+        </button>
+        <button id="btnTick" class="btn btn-secondary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+          </svg>
+          触发即时调度 (Tick)
+        </button>
+        <button id="btnExportIcs" class="btn btn-secondary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          导出 ICS 日历
+        </button>
+      </div>
+    </section>
+
+    <div class="data-source-bar">
+      <label for="databaseSelect">数据源：</label>
+      <select id="databaseSelect" class="select-input">
+        <option value="">加载中...</option>
+      </select>
+      <span id="dbTypeBadge" class="badge badge-success">当前群活动库</span>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <nav class="tabs-nav">
+      <button class="tab-btn active" data-tab="tab-events">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+          <line x1="16" y1="2" x2="16" y2="6"></line>
+          <line x1="8" y1="2" x2="8" y2="6"></line>
+          <line x1="3" y1="10" x2="21" y2="10"></line>
+        </svg>
+        讲座消息
+        <span id="tabBadgeEvents" class="tab-badge">0</span>
+      </button>
+
+      <button class="tab-btn" data-tab="tab-messages">
+        采集消息
+        <span id="tabBadgeMessages" class="tab-badge">0</span>
+      </button>
+
+      <button class="tab-btn" data-tab="tab-outbox">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+          <polyline points="22,6 12,13 2,6"></polyline>
+        </svg>
+        邮件通知队列
+        <span id="tabBadgeOutbox" class="tab-badge">0</span>
+      </button>
+
+      <button class="tab-btn" data-tab="tab-probe">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="16" x2="12" y2="12"></line>
+          <line x1="12" y1="8" x2="12.01" y2="8"></line>
+        </svg>
+        微信窗口与探针
+      </button>
+
+      <button class="tab-btn" data-tab="tab-config">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+        配置与邮箱设置
+      </button>
+
+      <button class="tab-btn" data-tab="tab-logs">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="4 17 10 11 4 5"></polyline>
+          <line x1="12" y1="19" x2="20" y2="19"></line>
+        </svg>
+        实时运行日志
+      </button>
+    </nav>
+
+    <!-- Tab 1: Events -->
+    <section id="tab-events" class="tab-content active">
+      <div id="mailDeliveryStatus" class="delivery-panel" role="status" aria-live="polite">正在检查所选群的邮件投递状态…</div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>讲座消息列表</span>
+          </div>
+
+        </div>
+
+        <div class="card-body">
+          <div class="filter-toolbar">
+            <div class="filter-left">
+              <span class="filter-pill active" data-filter="all">全部 (<span id="countFilterAll">0</span>)</span>
+            </div>
+
+            <div class="filter-right">
+              <div class="search-box">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="11" cy="11" r="8"></circle>
+                  <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                <input type="text" id="eventSearchInput" class="text-input" placeholder="按主题/内容搜索...">
+              </div>
+            </div>
+          </div>
+
+          <div id="eventsListContainer" class="events-container">
+            <!-- Event cards injected by JS -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-messages" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">已采集消息</div>
+          <span class="capture-note">按采集入库时间倒序 · 沿用页面自动刷新设置</span>
+        </div>
+        <div class="card-body">
+          <div class="capture-freshness" role="status" aria-live="polite">
+            <div>所选库最近成功采样：<strong id="messagesLastCapture">--</strong></div>
+            <div>最新消息入库：<strong id="messagesLatestReceived">--</strong></div>
+            <div id="messagesFreshnessHint">正在读取采集记录...</div>
+          </div>
+          <p class="capture-note">仅展示已入库消息；首次可见基线可能只标记为已见，不代表完整聊天历史。“非讲座”表示尚未关联讲座记录，可查看原文核对。转发卡片可能只有摘要。</p>
+          <div class="filter-toolbar">
+            <div class="filter-left" id="messageFilters" role="group" aria-label="采集消息分类">
+              <button class="filter-pill active" data-message-filter="all" aria-pressed="true">全部 (<span id="countMessagesAll">0</span>)</button>
+              <button class="filter-pill" data-message-filter="non_lecture" aria-pressed="false">非讲座 (<span id="countMessagesNonLecture">0</span>)</button>
+              <button class="filter-pill" data-message-filter="lecture" aria-pressed="false">讲座相关 (<span id="countMessagesLecture">0</span>)</button>
+            </div>
+            <input type="search" id="messageSearchInput" class="text-input" aria-label="搜索采集消息" placeholder="搜索正文、发送者...">
+          </div>
+          <div id="messagesLoadStatus" class="capture-note" role="status" aria-live="polite"></div>
+          <div id="messagesListContainer" class="events-container"></div>
+          <div class="message-pagination">
+            <button id="btnMessagesPrevious" class="btn btn-secondary btn-sm" disabled>上一页</button>
+            <span id="messagesPageInfo" class="capture-note"></span>
+            <button id="btnMessagesNext" class="btn btn-secondary btn-sm" disabled>下一页</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 2: Outbox -->
+    <section id="tab-outbox" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>通知邮件任务队列 (Outbox)</span>
+          </div>
+          <span style="font-size: 12px; color: var(--text-secondary);">
+            投递策略：石牌校区或未注明校区的讲座可通知 · 失败退避重试 · 最多5次
+          </span>
+        </div>
+
+        <div class="card-body">
+          <div class="table-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>通知原因</th>
+                  <th>讲座主题</th>
+                  <th>版本</th>
+                  <th>计划投递时间 (Due At)</th>
+                  <th>状态</th>
+                  <th>重试次数</th>
+                  <th>最近错误</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="outboxTableBody">
+                <!-- Outbox rows injected by JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 3: Probe & WeChat Diagnostics -->
+    <section id="tab-probe" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>微信桌面客户端与无障碍 (AX) 状态探针</span>
+          </div>
+          <button id="btnRunProbeAction" class="btn btn-sm btn-primary">立即执行探针</button>
+        </div>
+
+        <div class="card-body" style="display: flex; flex-direction: column; gap: 20px;">
+          <!-- Diagnostics Result Card -->
+          <div id="probeResultBox" style="background-color: var(--bg-subtle); border-radius: var(--radius-md); padding: 16px; border: 1px solid var(--border);">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+              <span style="font-weight: 600; font-size: 14px;">探针检测诊断结果</span>
+              <span id="probeStatusBadge" class="badge badge-neutral">尚未检测</span>
+            </div>
+            <pre id="probeJsonOutput" style="font-family: var(--font-mono); font-size: 12px; max-height: 240px; overflow-y: auto; background-color: var(--bg-card-solid); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border);">点击“立即执行探针”检测目标群独立窗口是否就绪</pre>
+          </div>
+
+          <!-- Troubleshooting guide -->
+          <div class="config-box">
+            <h4>💡 微信接入核查指南 (Mac / Windows)</h4>
+            <ul style="font-size: 13px; color: var(--text-secondary); line-height: 1.8; margin-left: 20px;">
+              <li><strong>微信登录</strong>：微信客户端必须保持已登录状态。</li>
+              <li><strong>独立窗口</strong>：在微信聊天列表中双击或右键将<strong>当前监控的目标微信群</strong>打开为<strong>独立窗口</strong>。</li>
+              <li><strong>非最小化</strong>：独立群窗口必须处于可见/非最小化状态（可以被其他窗口遮挡，但不可最小化到 Dock 或托盘）。</li>
+              <li><strong>macOS 辅助功能权限</strong>：在「系统设置」→「隐私与安全性」→「辅助功能」中允许 <code>WeChat Lecture Tracker Capture.app</code> 及运行终端。</li>
+              <li><strong>自动展开合并转发</strong>：支持对群内已验证的合并转发卡片进行安全展开与解析，未展开时保留待补全状态。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 4: Config & Environment -->
+    <section id="tab-config" class="tab-content">
+      <div class="card processing-card">
+        <div class="card-header">
+          <div class="card-title">通知内容处理 <span id="processingCurrent" class="badge badge-info">本地规则</span></div>
+          <div class="processing-switch" role="group" aria-label="通知处理方式">
+            <button id="btnProcessingRules" class="btn btn-sm btn-primary" aria-pressed="true">本地规则</button>
+            <button id="btnProcessingLlm" class="btn btn-sm btn-secondary" aria-pressed="false">LLM 提取</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <p class="processing-help">本地规则在本机识别；LLM 模式将新消息正文和附件名称发送至下方接口，提取标题、摘要、活动及报名信息。相关通知保留原文，接口失败时回退本地规则。切换仅对新消息生效。</p>
+          <p class="processing-help">校区规则（本地规则与 LLM 共用）：仅提醒石牌校区／石牌校园；大学城、佛山／南海及其他明确校区不提醒。未提及校区仍可通知，不按教学楼名推测；以实际举办地点为准，主讲履历或报名对象中的校区不作为举办地点。多地点包含石牌会场时可提醒。</p>
+          <p class="processing-help" id="processingMailFormat" role="status">邮件格式随处理方式切换：本地规则发送原文；LLM 展示提取信息并附原文。</p>
+          <p class="processing-help" id="processingScope">配置持续保存，适用于后续所有新消息；各服务的处理设置来源见下方服务列表。数据源切换仅查看对应群的记录。</p>
+          <form id="processingForm">
+            <div class="processing-fields">
+              <label>接口基础地址<input id="llmBaseUrl" class="text-input" type="url" required placeholder="https://api.example.com/v1" autocomplete="off"></label>
+              <label>模型名称<input id="llmModel" class="text-input" type="text" placeholder="填写服务提供的模型名称" maxlength="1000" autocomplete="off"></label>
+              <label>API Key<input id="llmApiKey" class="text-input" type="password" placeholder="未填写则保留已保存的密钥" autocomplete="new-password" maxlength="4096"><span id="llmKeyStatus" class="processing-help">尚未配置密钥（本地接口可留空）</span></label>
+              <label>请求超时（秒）<input id="llmTimeout" class="text-input" type="number" min="1" max="60" value="15" required></label>
+              <label>密钥环境变量（可选来源）<input id="llmKeyEnv" class="text-input" type="text" value="WECHAT_LLM_API_KEY" autocomplete="off" required></label>
+              <label><span class="processing-clear"><input id="llmDisableThinking" type="checkbox">关闭 thinking（百炼 / DeepSeek）</span><span class="processing-help">勾选后请求直接回答；不勾选时遵循服务默认设置。保存配置与测试提取均使用此选项。</span></label>
+              <label class="processing-clear"><input id="llmClearKey" type="checkbox">清除本机保存的密钥</label>
+            </div>
+            <div class="processing-actions"><button id="btnSaveProcessing" type="submit" class="btn btn-primary">保存配置</button><span id="processingFeedback" role="status" aria-live="polite"></span></div>
+          </form>
+          <details class="processing-test">
+            <summary>测试 LLM 内容提取</summary>
+            <label for="llmTestText" class="processing-help">仅发送下方输入的原文，可使用尚未保存的配置；不入库、不发信。缺少发送时间时不猜测相对日期。</label>
+            <textarea id="llmTestText" class="text-input" rows="5" maxlength="10000" placeholder="粘贴一条讲座通知，查看提取结果"></textarea>
+            <button id="btnTestProcessing" type="button" class="btn btn-secondary">测试提取</button>
+            <pre id="llmTestResult" role="status" aria-live="polite">尚未测试</pre>
+          </details>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>当前系统配置与运行凭据</span>
+          </div>
+          <button id="btnRunDemo" class="btn btn-sm btn-secondary">运行 Demo 回放测试</button>
+        </div>
+
+        <div class="card-body">
+          <div class="config-grid">
+            <div class="config-box">
+              <h4>🎯 监控策略配置</h4>
+              <div class="config-item"><span class="config-key">精确监控群名</span><span id="cfgGroup" class="config-val">--</span></div>
+              <div class="config-item"><span class="config-key">时区设定</span><span id="cfgTimezone" class="config-val">Asia/Shanghai</span></div>
+              <div class="config-item"><span class="config-key">活动前定时提醒</span><span id="cfgReminders" class="config-val">已停用 (默认空列表)</span></div>
+              <div class="config-item"><span class="config-key">最大投递重试</span><span id="cfgMaxAttempts" class="config-val">5 次</span></div>
+              <div class="config-item"><span class="config-key">采集后端</span><span id="cfgCaptureSource" class="config-val">--</span></div>
+            </div>
+
+            <div class="config-box">
+              <h4>✉️ QQ 邮箱服务 (SMTP)</h4>
+              <div class="config-item"><span class="config-key">SMTP 服务器</span><span id="cfgSmtpHost" class="config-val">smtp.qq.com</span></div>
+              <div class="config-item"><span class="config-key">端口与协议</span><span id="cfgSmtpPort" class="config-val">465 (SSL 加密)</span></div>
+              <div class="config-item"><span class="config-key">凭据存储</span><span id="cfgCredentials" class="config-val">Keychain / 环境变量</span></div>
+              <div class="config-item"><span class="config-key">系统钥匙串授权</span><button id="btnAuthorizeEmail" class="btn btn-secondary btn-sm">授权邮箱</button></div>
+              <p class="text-muted">后台不会主动弹密码。首次使用或授权失效时点击授权；此操作不会发送测试邮件。</p>
+              <div class="config-item"><span class="config-key">当前发信开关</span><span id="cfgSendState" class="config-val">仅预览模式</span></div>
+              <div class="config-item"><span class="config-key">当前邮件格式</span><span id="cfgMailFormat" class="config-val">原文通知；文件仅标注名称</span></div>
+            </div>
+
+            <div class="config-box">
+              <h4>💾 数据存储与备份 (SQLite)</h4>
+              <div class="config-item"><span class="config-key">数据目录</span><span id="cfgDataDir" class="config-val" style="font-size: 11px;">--</span></div>
+              <div class="config-item"><span class="config-key">日志模式</span><span id="cfgJournal" class="config-val">DELETE (PRAGMA FULL)</span></div>
+              <div class="config-item"><span class="config-key">定期安全备份</span><span id="cfgBackupTime" class="config-val">--</span></div>
+              <div class="config-item"><span class="config-key">单实例 OS 锁</span><span class="config-val">service.lock 独占保护</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Group Switcher Card -->
+      <div class="card" style="margin-top: 16px;">
+        <div class="card-header">
+          <div class="card-title">
+            <span>🎯 监测微信群切换管理 (Group Switch Manager)</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="switch-group-container">
+            <p style="font-size: 13px; color: var(--text-secondary); margin: 0;">
+              输入微信中目标群的精确名称。系统将先探测独立窗口是否存在，确认后自动停止旧群服务与开机自启，并为该群分配独立的稳定数据目录。切换操作保留原群数据库与历史事件，切回时可继续使用。
+            </p>
+            <div class="switch-group-row">
+              <input type="text" id="inputSwitchGroup" class="text-input" style="flex: 1; min-width: 260px;" placeholder="输入微信群完整精确名称">
+              <button id="btnProbeGroupCandidate" class="btn btn-secondary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="11" cy="11" r="8"></circle>
+                  <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                1. 探测群窗口
+              </button>
+              <button id="btnExecuteGroupSwitch" class="btn btn-primary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                2. 确认并切换群
+              </button>
+            </div>
+            <div id="groupSwitchFeedback" class="feedback-box" style="display: none;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Services Multi-Instance Manager Card -->
+      <div class="card" style="margin-top: 16px;">
+        <div class="card-header">
+          <div class="card-title">
+            <span>🖥️ 本机已识别监控服务列表 (Multi-Service Manager)</span>
+          </div>
+          <button id="btnRefreshServices" class="btn btn-sm btn-secondary">刷新服务列表</button>
+        </div>
+        <div class="card-body">
+          <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;">
+            可停止已识别的监控服务。“邮件测试”运行时可清空测试数据：删除消息、通知及去重/卡片缓存，不备份；已有聊天作为基线，重新转发的讲座会再次通知。清空后保持原发信模式，其他群数据保留。
+          </p>
+          <div style="overflow-x: auto;">
+            <table class="service-table">
+              <thead>
+                <tr>
+                  <th>监测群名</th>
+                  <th>数据目录</th>
+                  <th>PID</th>
+                  <th>当前状态</th>
+                  <th>发信模式</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="servicesTableBody">
+                <tr><td colspan="6" style="text-align: center; color: var(--text-tertiary); padding: 16px;">加载服务列表中...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 5: Logs -->
+    <section id="tab-logs" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>实时服务日志 (service.log)</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label style="font-size: 12px; display: flex; align-items: center; gap: 4px; cursor: pointer;">
+              <input type="checkbox" id="chkAutoScrollLogs" checked>
+              自动滚屏
+            </label>
+            <button id="btnClearLogs" class="btn btn-sm btn-secondary">清屏</button>
+            <button id="btnRefreshLogs" class="btn btn-sm btn-secondary">刷新日志</button>
+          </div>
+        </div>
+
+        <div class="card-body">
+          <div class="terminal-window">
+            <div class="terminal-header">
+              <div class="terminal-dots">
+                <span class="terminal-dot red"></span>
+                <span class="terminal-dot yellow"></span>
+                <span class="terminal-dot green"></span>
+              </div>
+              <span class="terminal-title">service.log · 最近 200 行</span>
+              <span></span>
+            </div>
+            <div id="terminalBody" class="terminal-body">
+              <div class="log-line">正在载入日志...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modals -->
+  <!-- 1. Event Detail Modal -->
+  <div id="eventDetailModal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="modalEventTitle">讲座消息详情</h3>
+        <button class="btn btn-icon btn-sm close-modal-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="event-meta-grid">
+          <div class="meta-item">
+            <span class="meta-label">讲座活动时间</span>
+            <span id="modalEventTime" class="meta-value">--</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">报名开始时间</span>
+            <span id="modalSignupStart" class="meta-value">--</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">报名链接</span>
+            <span id="modalSignupLink" class="meta-value">--</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">消息类型</span>
+            <span id="modalEventStatus" class="meta-value">--</span>
+          </div>
+        </div>
+
+        <div class="meta-item">
+          <span class="meta-label">消息摘要</span>
+          <div id="modalEventSummary" class="event-summary" style="margin-top: 4px;">--</div>
+        </div>
+
+        <div class="meta-item">
+          <span class="meta-label">微信消息原文 (Source Text)</span>
+          <pre id="modalEventSourceText" style="font-family: inherit; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; background-color: var(--bg-subtle); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); max-height: 200px; overflow-y: auto;"></pre>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="modalPreviewEmailBtn" class="btn btn-primary btn-sm">预览邮件通知</button>
+        <button class="btn btn-secondary btn-sm close-modal-btn">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Email Preview Modal -->
+  <div id="emailPreviewModal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>邮件通知预览</h3>
+        <button class="btn btn-icon btn-sm close-modal-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="email-preview-container">
+          <div class="email-meta-header">
+            <div><strong>发件人：</strong><span id="emailPreviewFrom">微信群通知机器人</span></div>
+            <div><strong>主题：</strong><span id="emailPreviewSubject" style="font-weight: 600; color: var(--blue);">--</span></div>
+            <div><strong>格式：</strong><span id="emailPreviewFormat">--</span></div>
+          </div>
+          <div id="emailPreviewBody" class="email-body-content">
+            --
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm close-modal-btn">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Confirm Modal -->
+  <div id="confirmModal" class="modal-overlay">
+    <div class="modal-box" style="max-width: 440px;">
+      <div class="modal-header">
+        <h3 id="confirmModalTitle">确认操作</h3>
+        <button class="btn btn-icon btn-sm close-modal-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <p id="confirmModalMessage" style="font-size: 14px; color: var(--text-secondary); line-height: 1.6; white-space: pre-line;">确定要执行此操作吗？</p>
+      </div>
+      <div class="modal-footer">
+        <button id="confirmModalCancelBtn" class="btn btn-secondary btn-sm">取消</button>
+        <button id="confirmModalOkBtn" class="btn btn-primary btn-sm">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

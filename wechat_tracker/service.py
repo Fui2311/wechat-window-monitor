@@ -4,6 +4,7 @@ import json
 import logging
 from logging.handlers import RotatingFileHandler
 import os
+import queue
 from pathlib import Path
 import signal
 import socket
@@ -88,11 +89,15 @@ def read_status(config):
 
 def stop_service(config, timeout=15):
     value = read_status(config)
-    if not value.get("running"):
-        return value
-    with socket.create_connection(("127.0.0.1", value["control_port"]), timeout=2) as connection:
-        connection.sendall((json.dumps({"action": "stop", "token": value["control_token"]}) + "\n").encode())
-        connection.recv(1024)
+    if value.get("running"):
+        try:
+            with socket.create_connection(("127.0.0.1", value["control_port"]), timeout=2) as connection:
+                connection.sendall((json.dumps({"action": "stop", "token": value["control_token"]}) + "\n").encode())
+                connection.recv(1024)
+        except OSError:
+            # launchctl bootout can stop the process between status and this
+            # request. The OS lock below proves shutdown even if the socket reset.
+            pass
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         lock = InstanceLock(config["data_dir"])
@@ -105,6 +110,23 @@ def stop_service(config, timeout=15):
             return read_status(config)
         time.sleep(0.2)
     raise RuntimeError("Service did not stop within its shutdown deadline; no PID was killed blindly")
+
+
+def reset_test_data(config, *, instance):
+    """Ask the owning monitor to reset on its SQLite thread, retaining credentials."""
+    status = read_status(config)
+    if status.get("group") != "邮件测试" or not status.get("running") or not status.get("reset_supported"):
+        raise ValueError("仅支持清空运行中的“邮件测试”服务，请先启动或更新该服务")
+    if status.get("instance") != instance:
+        raise ValueError("服务已发生变化，请刷新服务列表后重试")
+    with socket.create_connection(("127.0.0.1", status["control_port"]), timeout=2) as connection:
+        connection.settimeout(60)
+        connection.sendall((json.dumps(dict(action="reset_test_data", token=status["control_token"],
+                                            instance=instance, group="邮件测试")) + "\n").encode())
+        result = json.loads(connection.makefile("rb").readline(65536))
+    if not result.get("ok"):
+        raise ValueError(result.get("error", "清空未完成，请刷新状态"))
+    return result
 
 
 def start_service(config_path, config, send=False):
@@ -156,6 +178,7 @@ class MonitorService:
         self.sleep_guard = None
         self.latest_messages = []
         self.guard = threading.RLock()
+        self.reset_requests = queue.Queue()
         self.health = dict(instance=uuid.uuid4().hex, running=True, status="starting", pid=os.getpid(),
                            started_at=timestamp(), heartbeat_at=timestamp(), group=config["group"],
                            send_enabled=send, worker_pid=None, worker_restarts=0, snapshots=0,
@@ -163,6 +186,8 @@ class MonitorService:
                            last_capture_at=None, last_error=None, capture_gaps=0,
                            sqlite_version=sqlite3.sqlite_version, journal_mode="delete", backup_at=None,
                            coverage="loaded target-window viewport; complete history is not guaranteed")
+        self.health["config_path"] = config.get("config_path", "")
+        self.health["reset_supported"] = config["group"] == "邮件测试"
         self.log = logging.getLogger("wechat.service." + self.health["instance"])
         self.log.setLevel(logging.INFO)
         self.log.propagate = False
@@ -172,6 +197,14 @@ class MonitorService:
 
     def _save(self):
         with self.guard:
+            from .processing import effective_processing_config
+            try:
+                effective = effective_processing_config(self.config)
+                self.health.update(processing_mode=effective.get("processing_mode", "rules"),
+                                   processing_model=effective.get("llm_model", ""),
+                                   processing_settings_shared=effective["processing_settings_shared"])
+            except (OSError, ValueError):
+                self.health["processing_last_error"] = "处理配置读取或校验失败"
             self.health["heartbeat_at"] = timestamp()
             atomic_json(self.directory / "service.json", self.health)
 
@@ -196,11 +229,72 @@ class MonitorService:
                     elif request.get("action") == "status":
                         with self.guard:
                             response = dict(self.health)
+                    elif request.get("action") == "reset_test_data":
+                        if (self.config["group"] != "邮件测试" or request.get("group") != "邮件测试"
+                                or request.get("instance") != self.health["instance"]):
+                            response = {"error": "只能清空当前邮件测试服务"}
+                        else:
+                            done, response = threading.Event(), {}
+                            self.reset_requests.put((done, response))
+                            if not done.wait(55):
+                                response = {"error": "清理仍在等待监控响应，请刷新状态后核对"}
                     else:
                         response = {"error": "unsupported_action"}
                     connection.sendall((json.dumps(response, ensure_ascii=False) + "\n").encode("utf-8"))
                 except (ValueError, OSError):
                     pass
+
+    def _reset_test_data(self):
+        if self.config["group"] != "邮件测试":
+            raise ValueError("只能清空邮件测试数据")
+        if self.worker:
+            self.worker.close()
+            self.worker = None
+        self.health["worker_pid"] = None
+        # Prepare and validate the complete new baseline before touching live data.
+        # No card expansion or SMTP occurs during baseline preparation.
+        passive = dict(self.config, capture=dict(self.config.get("capture", {}),
+                                                follow_tail=False, recover_window=False))
+        messages = capture_once(passive)
+        baseline = Store(":memory:")
+        try:
+            messages, _ = enrich_forwards(messages, baseline, self.config, include_existing=False)
+            Engine(baseline, self.config).capture_snapshot(messages, include_existing=False)
+            tables = ("messages", "events", "outbox", "capture_seen", "capture_state", "forward_reads", "capture_gaps")
+            counts = {table: self.store.db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                      for table in tables}
+            with self.store.db:
+                for table in tables:
+                    self.store.db.execute(f"DELETE FROM {table}")
+                for table in ("capture_seen", "capture_state", "forward_reads"):
+                    for row in baseline.db.execute(f"SELECT * FROM {table}"):
+                        marks = ",".join("?" for _ in row)
+                        self.store.db.execute(f"INSERT INTO {table} VALUES ({marks})", tuple(row))
+        finally:
+            baseline.close()
+        self.settings["include_existing"] = False
+        self.latest_messages = messages
+        self.health.update(reset_at=timestamp(), snapshots=0, observed_messages=len(messages),
+                           events_created=0, email_sent=0, email_failures=0, due_previews=0,
+                           capture_gaps=0, forward_pending_body=0, forward_status=[], backup_at=None,
+                           last_error=None, status="monitoring", last_capture_at=timestamp())
+        self._save()
+        self.log.info("Test data cleared; baseline=%s; SMTP sending=%s", len(messages), self.send)
+        return dict(ok=True, cleared=counts, baseline_count=len(messages), send_enabled=self.send,
+                    reset_at=self.health["reset_at"])
+
+    def _process_reset_requests(self):
+        processed = False
+        while not self.reset_requests.empty():
+            done, response = self.reset_requests.get_nowait()
+            try:
+                response.update(self._reset_test_data())
+            except Exception as error:
+                response.update(ok=False, error=f"清空失败：{error}")
+            finally:
+                done.set()
+            processed = True
+        return processed
 
     def _gap(self, status):
         if self.health["status"] == "monitoring":
@@ -239,12 +333,31 @@ class MonitorService:
             self.latest_messages = messages
         else:
             messages = self.latest_messages
+        tail = result.get("diagnostics", {}).get("tail_follow", {})
+        capture = self.config.get("capture", {})
+        deferred = (capture.get("source") == "macos_ax" and capture.get("recover_window", False)
+                    and capture.get("follow_tail", True) and
+                    tail.get("action") in {"deferred_recovery", "deferred_user_busy", "deferred_ui_busy", "cooldown"})
+        self.health["capture_deferred_reason"] = (tail.get("error") or tail.get("action")) if deferred else None
+        if deferred:
+            # Retain the snapshot for a later ready heartbeat, but do not turn
+            # a user-scrolled historical viewport into new lecture emails.
+            return
         if messages:
             messages, forwards = enrich_forwards(messages, self.store, self.config,
                                                  include_existing=self.settings.get("include_existing", True))
+            observed_count = len(messages)
+            wait_body = (self.config.get("capture", {}).get("auto_expand_forward", False) and
+                         self.config.get("capture", {}).get("forward_wait_for_body", False))
+            pending = [message for message in messages if wait_body and message.get("kind") == "forward"
+                       and message.get("source") in {"macos_ax", "windows_uia"} and not message.get("children")]
+            self.health["forward_pending_body"] = len(pending)
+            if pending:
+                messages = [message for message in messages if message not in pending]
             outcomes = engine.capture_snapshot(messages, self.settings.get("include_existing", True))
+            self.health.update(engine.last_processing_report)
             self.health["snapshots"] += int(kind == "snapshot")
-            self.health["observed_messages"] = len(messages)
+            self.health["observed_messages"] = observed_count
             self.health["events_created"] += sum(len(item["events"]) for item in outcomes)
             self.health["forward_status"] = forwards
 
@@ -299,10 +412,14 @@ class MonitorService:
         try:
             while not self.stop.is_set() and (run_seconds is None or time.monotonic() - started < run_seconds):
                 now = time.monotonic()
+                if self._process_reset_requests():
+                    next_worker = now
+                    engine = Engine(self.store, self.config)
                 if self.config.get("capture", {}).get("source") == "jsonl":
                     if now >= next_worker:
                         messages = capture_once(self.config)
                         outcomes = engine.capture_snapshot(messages, self.settings.get("include_existing", True))
+                        self.health.update(engine.last_processing_report)
                         self.health.update(status="monitoring", last_capture_at=timestamp(), observed_messages=len(messages))
                         self.health["snapshots"] += 1
                         self.health["events_created"] += sum(len(item["events"]) for item in outcomes)
@@ -352,7 +469,7 @@ class MonitorService:
                 if now >= next_save:
                     self._save()
                     next_save = now + 5
-                if now >= next_backup:
+                if self.settings.get("backup_enabled", True) and now >= next_backup:
                     self.store.backup(self.directory / "tracker.last-good.sqlite3")
                     self.health["backup_at"] = timestamp()
                     next_backup = now + 3600

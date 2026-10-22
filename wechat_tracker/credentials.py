@@ -7,8 +7,48 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
 
 from .notify import _mailboxes, send_email
+
+
+_MAC_CREDENTIAL_CACHE = {}
+_MAC_CREDENTIAL_LOCK = threading.RLock()
+
+
+def _credential_helper(config):
+    capture = Path(config.get("capture", {}).get("mac_helper", ""))
+    if capture.parent.name == "MacOS" and capture.parent.parent.name == "Contents":
+        app = capture.parent.parent.parent
+        stable = app.with_name("WeChat Lecture Tracker Credentials.app") / "Contents/MacOS/wechat-credentials"
+        if stable.is_file():
+            return stable
+    return capture
+
+
+def _cached_mac_credentials(config, marker):
+    # Cache only in this process's memory. A saved/updated marker invalidates
+    # both successful reads and a cancelled/timed-out authorization attempt.
+    stat = marker.stat()
+    key = (os.getpid(), str(marker.resolve()), config["group"])
+    version = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+    with _MAC_CREDENTIAL_LOCK:
+        previous = _MAC_CREDENTIAL_CACHE.get(key)
+        if previous is not None and previous[0] == version:
+            if previous[2]:
+                raise RuntimeError(previous[2])
+            return dict(previous[1])
+        try:
+            values = _keychain(config, "credential-get")
+            fields = ("smtp_user_env", "smtp_password_env", "from_env", "to_env")
+            if not isinstance(values, dict) or any(not isinstance(values.get(field), str) or not values[field] for field in fields):
+                raise RuntimeError("macOS Keychain credential data is incomplete")
+        except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired):
+            message = "邮箱钥匙串授权未完成；后台不会反复弹窗，请在配置与邮箱设置中点击“授权邮箱”，完成后会自动重试"
+            _MAC_CREDENTIAL_CACHE[key] = (version, None, message)
+            raise RuntimeError(message) from None
+        _MAC_CREDENTIAL_CACHE[key] = (version, dict(values), None)
+        return dict(values)
 
 
 def _dpapi(data, *, decrypt=False):
@@ -34,13 +74,24 @@ def _dpapi(data, *, decrypt=False):
 
 
 def _keychain(config, action, value=None):
-    helper = config.get("capture", {}).get("mac_helper")
-    if not helper or not Path(helper).is_file():
+    helper = _credential_helper(config)
+    if not helper.is_file():
         raise RuntimeError("Build the macOS helper before configuring Keychain credentials")
     request = dict(service="wechat-lecture-tracker", account=config["group"])
     if value is not None:
         request["value"] = json.dumps(value)
-    result = subprocess.run([str(helper), action], input=json.dumps(request).encode(), capture_output=True, timeout=30)
+    # Different group services may share the same secure source. Serialize
+    # authorization across processes so system password panels cannot stack.
+    import fcntl
+    lock_path = Path(config["data_dir"]) / ".keychain-access.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    with os.fdopen(descriptor, "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            result = subprocess.run([str(helper), action], input=json.dumps(request).encode(), capture_output=True, timeout=120)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("macOS Keychain authorization timed out") from None
     if result.returncode:
         raise RuntimeError("macOS Keychain access failed; check the local account and Keychain permission")
     return json.loads(result.stdout) if action == "credential-get" else None
@@ -65,9 +116,50 @@ def save_credentials(config, values):
         raise RuntimeError("Secure credential storage requires Windows or macOS")
 
 
+def authorize_credentials(config):
+    """Explicit user action; the native helper discards secrets before replying."""
+    linked = config.get("email_credentials_config_path")
+    if linked:
+        from .config import load_config
+        path = Path(linked).expanduser()
+        if not path.is_absolute():
+            path = Path(config["config_path"]).parent / path
+        source = load_config(path)
+        if source.get("email_credentials_config_path"):
+            raise RuntimeError("邮箱凭据来源不支持多层引用")
+        return authorize_credentials(source)
+    if sys.platform != "darwin":
+        return {"configured": apply_credentials(config), "smtp_sent": False}
+    marker = Path(config["data_dir"]) / "email.keychain"
+    if not marker.is_file():
+        raise ValueError("邮箱尚未配置，请先配置邮箱")
+    if _credential_helper(config).name != "wechat-credentials":
+        raise RuntimeError("请先安装独立邮箱授权助手")
+    _keychain(config, "credential-authorize")
+    # Wake the running service's cached failure without exposing values to the
+    # web server or writing any password to disk.
+    marker.touch()
+    return {"configured": True, "smtp_sent": False}
+
+
 def apply_credentials(config):
     email = config.get("email", {})
     fields = ("smtp_user_env", "smtp_password_env", "from_env", "to_env")
+    linked = config.get("email_credentials_config_path")
+    if linked:
+        from .config import load_config
+        source_path = Path(linked).expanduser()
+        if not source_path.is_absolute():
+            source_path = Path(config["config_path"]).parent / source_path
+        source = load_config(source_path)
+        if source.get("email_credentials_config_path"):
+            raise RuntimeError("邮箱凭据来源不支持多层引用")
+        if not apply_credentials(source):
+            return False
+        # Reuse secure storage, without copying passwords to config or disk.
+        for field in fields:
+            os.environ[email[field]] = os.environ[source["email"][field]]
+        return True
     if sys.platform == "win32":
         path = Path(config["data_dir"]) / "email.credentials"
         if path.is_file():
@@ -77,7 +169,7 @@ def apply_credentials(config):
                     raise RuntimeError("Encrypted email credential data is incomplete")
                 os.environ[email[field]] = values[field]
     elif sys.platform == "darwin" and (Path(config["data_dir"]) / "email.keychain").is_file():
-        values = _keychain(config, "credential-get")
+        values = _cached_mac_credentials(config, Path(config["data_dir"]) / "email.keychain")
         for field in fields:
             os.environ[email[field]] = values[field]
     return all(isinstance(email.get(field), str) and bool(os.environ.get(email[field])) for field in fields)
@@ -100,7 +192,7 @@ def configure_email(config):
         old_values[key] = os.environ.get(key)
         os.environ[key] = value
     try:
-        send_email("微信讲座监控配置测试", "这是一封本机服务配置测试邮件。收到后，服务可按配置发送讲座摘要和到场前提醒。", config["email"])
+        send_email("微信讲座监控配置测试", "这是一封本机服务配置测试邮件。收到后，服务可按配置发送讲座通知。", config["email"])
         save_credentials(config, values)
     finally:
         for key, value in old_values.items():

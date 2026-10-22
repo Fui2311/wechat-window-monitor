@@ -4,11 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wechat-lecture-tracker"
-version = "0.4.0"
+version = "1.0.0"
 readme = "README.md"
-description = "Local Weixin lecture capture, evidence extraction and email reminders"
+description = "Local Weixin lecture capture, evidence extraction and preview-first notifications"
 requires-python = ">=3.11"
 dependencies = []
+
+[project.optional-dependencies]
+dev = ["build>=1.2,<2", "setuptools>=68", "wheel>=0.43", "ruff>=0.11,<1", "tzdata>=2024.1; sys_platform == 'win32'"]
+
+[project.urls]
+Repository = "https://github.com/Fui2311/wechat_tracking"
+Changelog = "https://github.com/Fui2311/wechat_tracking/blob/main/CHANGELOG.md"
 
 [project.scripts]
 wechat-track = "wechat_tracker.cli:main"
@@ -17,5 +24,10 @@ wechat-track = "wechat_tracker.cli:main"
 include = ["wechat_tracker*"]
 
 [tool.setuptools.package-data]
-wechat_tracker = ["resources/*.ps1", "resources/*.jsonl", "resources/*.swift"]
+wechat_tracker = ["resources/*.ps1", "resources/*.jsonl", "resources/*.swift", "resources/*.toml", "resources/web/*"]
 
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E9", "F821", "F822", "F823"]

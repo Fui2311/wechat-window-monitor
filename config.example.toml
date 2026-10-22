@@ -1,9 +1,20 @@
 group = "2026级计算机研究生通知群"
 data_dir = "state"
 timezone = "Asia/Shanghai"
-# 活动开始前提醒；报名截止时间仅展示，不单独触发提醒。
-reminder_minutes = [1440, 60]
+# 仅发现通知；报名后是否入选由用户自行核对群内确认名单。
+reminder_minutes = []
 max_attempts = 5
+
+# 通知处理：rules 为本地规则；llm 将新消息正文发送至配置的接口。
+processing_mode = "rules"
+# OpenAI 兼容 Chat Completions 基础地址（可使用本地 HTTP 服务）
+llm_base_url = "https://api.openai.com/v1"
+llm_model = ""
+# 可在控制台填写密钥，独立保存到 config.toml.llm-key（POSIX 权限 600；Windows 继承目录 ACL）；也可用环境变量。
+llm_api_key_env = "WECHAT_LLM_API_KEY"
+llm_timeout_seconds = 15
+# 百炼等兼容服务：true 时发送 enable_thinking=false；false 时遵循服务默认设置。
+llm_disable_thinking = false
 
 [service]
 resync_seconds = 15
@@ -32,4 +43,3 @@ smtp_user_env = "WECHAT_SMTP_USER"
 smtp_password_env = "WECHAT_SMTP_PASSWORD"
 from_env = "WECHAT_EMAIL_FROM"
 to_env = "WECHAT_EMAIL_TO"
-

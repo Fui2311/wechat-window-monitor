@@ -46,7 +46,52 @@ class EngineTests(unittest.TestCase):
         self.assertNotIn("arrival_at", actual)
         self.assertFalse(actual["needs_review"])
         self.assertTrue(actual["schedule_ready"])
-        self.assertEqual(len(self.store.jobs()), 3)
+        self.assertEqual(len(self.store.jobs()), 1)
+        self.assertEqual(actual["record_type"], "notice")
+
+    def test_lecture_notices_ignore_semantic_status_and_missing_time(self):
+        for index, text in enumerate(("讲座报名开放了", "《研究方法》讲座取消，请相互转告", "讲座时间待定")):
+            self.engine.ingest(dict(id=str(index), group=GROUP, text=text), NOW)
+        self.assertEqual(len(self.store.events()), 3)
+        self.assertEqual([job["reason"] for job in self.store.jobs()], ["new"] * 3)
+        self.assertTrue(all(e["status"] == "noticed" and not e["needs_review"] for e in self.store.events()))
+        self.assertEqual(len(self.engine.dispatch(NOW)), 3)
+
+    def test_new_messages_with_same_topic_notify_and_repeated_capture_deduplicates(self):
+        text = "讲座主题：《同一讲座》\n讲座时间待定"
+        for identifier in ("one", "two"):
+            self.engine.ingest(dict(id=identifier, group=GROUP, text=text), NOW)
+        repeat = self.engine.ingest(dict(id="two", group=GROUP, text=text), NOW)
+        self.assertTrue(repeat["duplicate"])
+        self.assertEqual(len(self.store.events()), 2)
+        self.assertEqual(len(self.store.jobs()), 2)
+
+    def test_forum_forward_preview_queues_one_notice_before_body_is_available(self):
+        preview = dict(id="forum-forward", group=GROUP, kind="forward", sent_at=None,
+                       text="【第十九届“勷勤论坛”研途分享会报名通知】")
+        first = self.engine.ingest(preview, NOW)
+        second = self.engine.ingest(dict(preview), NOW)
+        self.assertEqual(len(first["events"]), 1)
+        self.assertTrue(second["duplicate"])
+        self.assertEqual([job["status"] for job in self.store.jobs()], ["pending"])
+        notice, = self.store.events()
+        self.assertIn("没有可读取的子消息正文", notice["evidence"]["content_note"])
+        self.assertIsNone(notice["start_at"])
+
+    def test_notice_smtp_payload_preserves_original_and_sends_once(self):
+        text = "讲座报名时间：2026年10月16日09:00-18:00\n报名链接：https://example.com/signup"
+        self.engine.ingest(dict(id="signup", group=GROUP, text=text), NOW)
+        with patch("wechat_tracker.engine.send_email") as smtp:
+            self.engine.dispatch(NOW, send=True)
+            self.engine.dispatch(NOW, send=True)
+        smtp.assert_called_once()
+        body = smtp.call_args.args[1]
+        self.assertEqual(body, text)
+        self.assertIn("报名链接：https://example.com/signup", body)
+        self.assertNotIn("已取消", body)
+        self.assertNotIn("待核实", body)
+        self.assertIn("<h1", smtp.call_args.kwargs["html_body"])
+        self.assertIn("https://example.com/signup", smtp.call_args.kwargs["html_body"])
 
     def test_duplicate_and_preview_do_not_consume(self):
         self.ingest()
@@ -54,6 +99,25 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(len(self.engine.dispatch(NOW)), 1)
         self.assertEqual(len(self.engine.dispatch(NOW)), 1)
         self.assertEqual(len(self.store.jobs()), 3)
+
+    def test_default_configuration_only_queues_discovery_notice(self):
+        self.config.pop('reminder_minutes')
+        self.ingest()
+        self.assertEqual([job['reason'] for job in self.store.jobs()], ['new'])
+
+    def test_disabling_reminders_retires_pending_and_interrupted_alarms(self):
+        self.ingest()
+        with self.store.db:
+            self.store.db.execute("""UPDATE outbox SET status='sending',claimed_at='2026-10-15T00:00:00+00:00'
+                WHERE reason='reminder' AND dedup_key LIKE '%:60'""")
+        self.config['reminder_minutes'] = []
+        with patch('wechat_tracker.engine.send_email') as smtp:
+            sent = self.engine.dispatch(parse_time('2026-10-17T13:45:00+08:00'), send=True)
+        self.assertEqual([job['reason'] for job in sent], ['new'])
+        self.assertEqual(smtp.call_count, 1)
+        self.assertTrue(all(job['status'] == 'superseded' and job['claimed_at'] is None
+                            for job in self.store.jobs() if job['reason'] == 'reminder'))
+        self.assertEqual(self.engine.dispatch(parse_time('2026-10-17T14:00:00+08:00')), [])
 
     def test_reminder_uses_start_even_with_legacy_arrival_and_does_not_replay_missed(self):
         self.ingest()

@@ -11,6 +11,44 @@ from wechat_tracker.store import Store
 
 
 class WatchCliTests(unittest.TestCase):
+    def test_init_creates_loadable_platform_config_and_refuses_overwrite(self):
+        from wechat_tracker.config import load_config
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "config.local.toml"
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["init", str(target), "--platform", "windows", "--group", "精确测试群"]), 0)
+            config = load_config(target)
+            self.assertEqual(config["group"], "精确测试群")
+            self.assertEqual(config["capture"]["source"], "windows_uia")
+            self.assertEqual(config["data_dir"], str((target.parent / "state").resolve()))
+            original = target.read_bytes()
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(main(["init", str(target)]), 2)
+            self.assertEqual(target.read_bytes(), original)
+
+    def test_demo_ignores_live_group_and_llm_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "config.local.toml"
+            target.write_text('group = "另一群"\ndata_dir = "state"\nprocessing_mode = "llm"\nllm_model = "forbidden-model"\n', encoding="utf-8")
+            with patch("urllib.request.build_opener", side_effect=AssertionError("no model access")), \
+                    patch("wechat_tracker.engine.send_email", side_effect=AssertionError("no SMTP")), \
+                    redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["--config", str(target), "demo"]), 0)
+                self.assertEqual(main(["--config", str(target), "demo"]), 0)
+            store = Store(target.parent / "state/demo.sqlite3")
+            try:
+                self.assertEqual(len(store.events()), 1)
+                self.assertEqual(len(store.jobs()), 1)
+                self.assertEqual(store.events()[0]["processing_method"], "rules")
+                self.assertEqual(store.jobs()[0]["status"], "pending")
+            finally:
+                store.close()
+
+    def test_packaged_configuration_templates_match_editable_examples(self):
+        from wechat_tracker.paths import PROJECT_ROOT, RESOURCE_ROOT
+        self.assertEqual((RESOURCE_ROOT / "config.windows.toml").read_bytes(), (PROJECT_ROOT / "config.example.toml").read_bytes())
+        self.assertEqual((RESOURCE_ROOT / "config.macos.toml").read_bytes(), (PROJECT_ROOT / "mac/config.example.toml").read_bytes())
+
     def test_reanalysis_refuses_live_database_even_with_db_override(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "config.toml"
@@ -52,11 +90,11 @@ class WatchCliTests(unittest.TestCase):
             store = Store(db)
             try:
                 events = store.events()
-                self.assertEqual(len(events), 2)
+                self.assertEqual(len(events), 1)
                 scheduled = [event for event in events if event.get("schedule_ready")]
                 self.assertEqual(len(scheduled), 1)
                 self.assertEqual(scheduled[0]["start_at"], "2026-10-20T14:00:00+08:00")
-                self.assertEqual(sum(event.get("record_type") == "review" for event in events), 1)
+                self.assertTrue(all(event.get("record_type") == "notice" for event in events))
                 self.assertEqual(store.db.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
                 self.assertTrue(all(job["status"] == "pending" for job in store.jobs()))
             finally:

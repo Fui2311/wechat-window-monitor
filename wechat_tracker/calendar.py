@@ -23,7 +23,12 @@ def export_ics(events: list[dict]) -> str:
         if event.get("status") == "cancelled":
             lines.append("STATUS:CANCELLED")
         description = "讲座摘要：" + (event.get("summary") or event["title"])
-        description += "\n报名截止时间：" + (event.get("deadline_at") or event.get("deadline_text") or "未注明")
+        if event.get("category") == "lecture_notice":
+            description += "\n报名开始时间：" + (event.get("signup_start_at") or event.get("signup_start_text") or "未注明")
+            if event.get("signup_url"):
+                description += "\n报名链接：" + event["signup_url"]
+        else:
+            description += "\n报名截止时间：" + (event.get("deadline_at") or event.get("deadline_text") or "未注明")
         lines.extend([f"DESCRIPTION:{_escape(description)}", "END:VEVENT"])
     lines.append("END:VCALENDAR")
     # RFC 5545 folds physical lines at 75 UTF-8 octets without splitting characters.

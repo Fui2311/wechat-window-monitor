@@ -1,0 +1,42 @@
+name: Validate release
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  PYTHONUTF8: '1'
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ['3.11', '3.13']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m ruff check wechat_tracker tests mac scripts
+      - run: python -m unittest discover -s tests -v
+      - run: python -m build
+      - run: python scripts/check-release.py
+      - run: python scripts/build-mac-package.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.os }}-py${{ matrix.python }}
+          path: dist/*
+  native:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile native helpers (desktop permissions are tested separately)
+        run: |
+          mkdir -p dist/native
+          xcrun swiftc -O -swift-version 5 wechat_tracker/resources/mac-capture.swift -o dist/native/wechat-capture
+          xcrun swiftc -O -swift-version 5 wechat_tracker/resources/mac-credentials.swift -o dist/native/wechat-credentials
+          dist/native/wechat-capture self-test

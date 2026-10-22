@@ -15,16 +15,15 @@ from datetime import date, datetime, timedelta, timezone
 from email.errors import HeaderParseError
 from email.headerregistry import Address
 from email.message import EmailMessage
+from html import escape
 from typing import Any
+from urllib.parse import urlsplit
 
 
-class EmailConfigurationError(ValueError):
-    """A notification or SMTP configuration cannot be used safely."""
-
-
-class EmailNotificationError(RuntimeError):
-    """A single SMTP attempt failed; the caller may apply its retry policy."""
-
+from .presentation.notifications import (
+    EmailConfigurationError, EmailNotificationError, format_notification,
+    format_notification_html, notification_format,
+)
 
 _REQUIRED_KEYS = frozenset(
     {
@@ -39,75 +38,6 @@ _REQUIRED_KEYS = frozenset(
 )
 _ALLOWED_KEYS = _REQUIRED_KEYS | {"smtp_timeout"}
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_BEIJING = timezone(timedelta(hours=8))
-_REASONS = {
-    "new": "新增",
-    "update": "变更",
-    "cancelled": "取消",
-    "reminder": "到时提醒",
-    "review": "待核实",
-}
-
-
-def _text(value: Any) -> str:
-    if value is None:
-        return ""
-    return str(value).strip()
-
-
-def _display_datetime(value: Any) -> str:
-    if not value:
-        return "未识别，请核对原文"
-    if isinstance(value, datetime):
-        parsed = value
-    elif isinstance(value, date):
-        return f"{value.isoformat()}（具体时间待核实）"
-    else:
-        raw = _text(value)
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
-            return f"{raw}（具体时间待核实）"
-        try:
-            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        except ValueError:
-            return f"{raw}（时间格式待核实）"
-    if parsed.tzinfo is None:
-        return f"{parsed:%Y-%m-%d %H:%M}（时区待核实）"
-    return f"{parsed.astimezone(_BEIJING):%Y-%m-%d %H:%M}（北京时间）"
-
-
-def format_notification(event: dict, reason: str) -> tuple[str, str]:
-    """Return exactly three information fields; signup remains manual."""
-    if not isinstance(event, dict):
-        raise EmailConfigurationError("event 必须是对象。")
-    if reason not in _REASONS:
-        raise EmailConfigurationError("未知通知原因；允许 new/update/cancelled/reminder/review。")
-
-    title = _text(event.get("title")) or "未识别标题"
-    # Subjects must remain one line even when source-derived titles contain newlines.
-    subject_title = " ".join(title.split())[:180]
-    subject = f"[微信群通知·{_REASONS[reason]}] {subject_title}"
-    summary = " ".join((_text(event.get("summary")) or f"讲座《{title}》，内容未注明。").split())[:500]
-    cancelled = reason == "cancelled" or event.get("status") == "cancelled"
-    if cancelled:
-        summary = "【已取消】" + summary
-    elif reason == "update":
-        summary = "【通知更新】" + summary
-    elif reason == "review":
-        summary = "【待核实】" + summary
-    deadline = _display_datetime(event["deadline_at"]) if event.get("deadline_at") else (
-        " ".join(_text(event.get("deadline_text")).split())[:400] + "（待核实）" if event.get("deadline_text") else "未注明")
-    if event.get("start_at") and event.get("schedule_ready", not event.get("needs_review")):
-        activity = _display_datetime(event["start_at"])
-        if event.get("end_at"):
-            activity += " 至 " + _display_datetime(event["end_at"])
-    else:
-        activity = (" ".join(_text(event.get("activity_time_text")).split())[:400] + "（待核实）"
-                    if event.get("activity_time_text") else "未注明（待核实）")
-    if cancelled:
-        activity = "已取消；原定 " + activity if event.get("start_at") else "已取消"
-    return subject, f"讲座摘要：{summary}\n报名截止时间：{deadline}\n讲座活动时间：{activity}"
-
-
 def _env_value(config: dict, key: str) -> str:
     name = config[key]
     if not isinstance(name, str) or not _ENV_NAME.fullmatch(name):
@@ -144,8 +74,8 @@ def _mailboxes(raw: str, label: str, *, multiple: bool) -> list[str]:
     return list(dict.fromkeys(result))
 
 
-def send_email(subject: str, body: str, config: dict) -> None:
-    """Send one plain-text UTF-8 email; never fall back to unencrypted SMTP.
+def send_email(subject: str, body: str, config: dict, *, html_body: str | None = None) -> None:
+    """Send UTF-8 text with an optional HTML alternative over verified TLS.
 
     Credentials and email addresses are read exclusively from named environment
     variables. Failure messages intentionally omit server responses and secrets.
@@ -188,6 +118,8 @@ def send_email(subject: str, body: str, config: dict) -> None:
         raise EmailConfigurationError("邮件主题必须是单行字符串。")
     if not isinstance(body, str):
         raise EmailConfigurationError("邮件正文必须是字符串。")
+    if html_body is not None and not isinstance(html_body, str):
+        raise EmailConfigurationError("HTML 邮件正文必须是字符串。")
 
     # Finish all validation before creating a network connection.
     user = _env_value(config, "smtp_user_env")
@@ -200,6 +132,8 @@ def send_email(subject: str, body: str, config: dict) -> None:
     message["From"] = sender
     message["To"] = ", ".join(recipients)
     message.set_content(body, charset="utf-8")
+    if html_body is not None:
+        message.add_alternative(html_body, subtype="html", charset="utf-8")
     context = ssl.create_default_context()
     try:
         if security == "ssl":

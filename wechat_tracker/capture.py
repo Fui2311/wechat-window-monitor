@@ -252,6 +252,13 @@ def read_forward(config: dict, parent_id: str, *, snapshot: dict | None = None) 
     if not options.get("forward_window_title"):
         raise CaptureError("capture.forward_window_title is required")
     if snapshot is None:
+        if options.get("source") == "macos_ax":
+            from .macos import capture_once as mac_capture, read_open_forward
+            passive = dict(config, capture=dict(options, follow_tail=False, recover_window=False))
+            parents = [message for message in mac_capture(passive) if message.get("id") == parent_id]
+            if len(parents) != 1:
+                raise CaptureError("The explicitly selected macOS parent card is no longer present")
+            return read_open_forward(config, parents[0])
         result = _run_uia(group, options, mode="forward")
         if result.get("ok") is not True:
             raise CaptureError(f"{result.get('status', 'uia_error')}: {result.get('error', 'merged history is unavailable')}")

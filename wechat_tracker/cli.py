@@ -7,7 +7,7 @@ import time
 
 from .calendar import export_ics
 from .capture import CaptureError
-from .config import load_config
+from .config import load_config, resolve_config_path
 from .engine import Engine, parse_time
 from .store import Store
 
@@ -33,9 +33,15 @@ def main(argv=None):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="指定微信群讲座捕获、分析与邮箱提醒（默认仅预览）")
-    parser.add_argument("--config", default="config.example.toml")
+    from . import __version__
+    parser.add_argument("--version", action="version", version="%(prog)s " + __version__)
+    parser.add_argument("--config", default=None, help="配置文件路径（默认自动寻找本地配置）")
     parser.add_argument("--db", help="覆盖SQLite路径，用于隔离测试数据")
     sub = parser.add_subparsers(dest="command", required=True)
+    init = sub.add_parser("init", help="创建本地配置（已有文件不覆盖）")
+    init.add_argument("path", nargs="?", default="config.local.toml")
+    init.add_argument("--platform", choices=["macos", "windows", "jsonl"], help="jsonl 用于离线样例")
+    init.add_argument("--group", help="精确群名")
     sub.add_parser("probe", help="只读检查目标群窗口与采集能力")
     ingest = sub.add_parser("ingest", help="导入标准化JSONL，可含转发子记录")
     ingest.add_argument("path")
@@ -56,7 +62,7 @@ def main(argv=None):
     watch.add_argument("--interval", type=int, default=15)
     watch.add_argument("--include-existing", action="store_true", help="首次捕获也分析现有可见消息")
     watch.add_argument("--send", action="store_true", help="真实发送邮件")
-    watch.add_argument("--expand-forward", action="store_true", help="允许打开已核对的转发卡片；需要目标群置前且用户空闲")
+    watch.add_argument("--expand-forward", action="store_true", help="允许打开已核对的转发卡片；默认需群窗口置前，Mac交互方式由配置决定")
     calendar = sub.add_parser("calendar", help="导出确定日程的ICS（时间等有歧义的线索不导出）")
     calendar.add_argument("path")
     demo = sub.add_parser("demo", help="截图样例回放；使用独立demo.sqlite3，不真实发送")
@@ -66,14 +72,30 @@ def main(argv=None):
     service.add_argument("--send", action="store_true", help="开启真实SMTP发送")
     service.add_argument("--run-seconds", type=int, help=argparse.SUPPRESS)
     email = sub.add_parser("email", help="本机加密配置SMTP并发送测试邮件")
-    email.add_argument("action", choices=["setup", "status"])
+    email.add_argument("action", choices=["setup", "status", "authorize"])
+    web = sub.add_parser("web", help="启动前端原生控制页面")
+    web.add_argument("--config", default=argparse.SUPPRESS, help="配置文件路径（可选覆盖）")
+    web.add_argument("--host", default="127.0.0.1", help="监听地址，默认 127.0.0.1")
+    web.add_argument("--port", type=int, default=8088, help="监听端口，默认 8088")
+    web.add_argument("--open", action="store_true", help="启动后自动在默认浏览器中打开控制页面")
     args = parser.parse_args(argv)
+    explicit_cfg = getattr(args, "config", None)
+    config_path = str(resolve_config_path(explicit_cfg))
     store = None
     try:
-        config = load_config(args.config)
+        if args.command == "init":
+            from .bootstrap import initialize_config
+            target = initialize_config(args.path, platform=args.platform, group=args.group)
+            output({"config": str(target), "notice": "配置已创建；按需修改群名，然后使用 --config 显式指定此文件。"})
+            return 0
+        config = load_config(config_path)
+        if args.command == "web":
+            from .web import run_web
+            return run_web(config_path, host=args.host, port=args.port, open_browser=args.open)
         if args.command == "email":
-            from .credentials import apply_credentials, configure_email
-            output(configure_email(config) if args.action == "setup" else {"configured": apply_credentials(config)})
+            from .credentials import apply_credentials, configure_email, authorize_credentials
+            output(configure_email(config) if args.action == "setup" else authorize_credentials(config)
+                   if args.action == "authorize" else {"configured": apply_credentials(config)})
             return 0
         if args.command == "service":
             if args.db:
@@ -85,21 +107,21 @@ def main(argv=None):
             elif args.action == "status":
                 result = read_status(config)
             elif args.action == "stop":
-                manage_startup(args.config, config, "pause")
+                manage_startup(config_path, config, "pause")
                 result = stop_service(config)
             elif args.action in {"start", "restart"}:
                 if args.action == "restart":
-                    manage_startup(args.config, config, "pause")
+                    manage_startup(config_path, config, "pause")
                     stop_service(config)
-                result = start_service(args.config, config, args.send)
+                result = start_service(config_path, config, args.send)
             elif args.action == "install":
-                manage_startup(args.config, config, "pause")
+                manage_startup(config_path, config, "pause")
                 stop_service(config)
-                startup = manage_startup(args.config, config, "install", send=args.send)
-                result = start_service(args.config, config, args.send)
+                startup = manage_startup(config_path, config, "install", send=args.send)
+                result = start_service(config_path, config, args.send)
                 result["startup"] = startup
             else:
-                result = manage_startup(args.config, config, "uninstall")
+                result = manage_startup(config_path, config, "uninstall")
                 stop_service(config)
             result.pop("control_token", None)
             output(result)
@@ -129,6 +151,12 @@ def main(argv=None):
             source = args.path if args.command == "ingest" else Path(__file__).resolve().parent / "resources" / "screenshot.jsonl"
             now = parse_time(args.now) if args.now else None
             for message in read_jsonl(source):
+                if args.command == "demo":
+                    # Demo never inherits a live group, linked settings or LLM mode.
+                    demo_config = dict(config, group=message["group"], processing_mode="rules", reminder_minutes=[])
+                    demo_config.pop("config_path", None)
+                    demo_config.pop("processing_config_path", None)
+                    engine = Engine(store, demo_config)
                 output(engine.ingest(message, now))
             if args.command == "demo":
                 previews = engine.dispatch(now, send=False)
