@@ -62,7 +62,7 @@ class WebControlReviewTests(unittest.TestCase):
             status, _, body = self.request('/api/demo/run', body={})
         self.assertEqual(status, 200, body)
         database = json.loads(body)['db']
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection:
             event = json.loads(connection.execute('SELECT payload FROM events').fetchone()[0])
         self.assertEqual(event['processing_method'], 'rules')
 
