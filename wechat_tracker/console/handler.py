@@ -549,6 +549,7 @@ class WebControlHandler(BaseHTTPRequestHandler):
                             demo_config = dict(self.config, group=message["group"], reminder_minutes=[],
                                                processing_mode="rules")
                             demo_config.pop("config_path", None)
+                            demo_config.pop("processing_config_path", None)
                             engine = Engine(store, demo_config)
                             now = datetime.fromisoformat(message["sent_at"].replace("Z", "+00:00"))
                             outcomes.append(engine.ingest(message, now=now))

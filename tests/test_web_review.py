@@ -54,6 +54,18 @@ class WebControlReviewTests(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertIsNone(headers.get("Access-Control-Allow-Origin"))
 
+    def test_web_demo_ignores_shared_processing_source_even_when_source_cannot_be_loaded(self):
+        # CLI already isolates linked settings; the web replay must have the same contract.
+        self.server.config['processing_config_path'] = 'nonexistent-shared.toml'
+        with patch('wechat_tracker.extraction.pipeline.extract_llm', side_effect=AssertionError('model access forbidden')), \
+                patch('wechat_tracker.engine.send_email', side_effect=AssertionError('SMTP forbidden')):
+            status, _, body = self.request('/api/demo/run', body={})
+        self.assertEqual(status, 200, body)
+        database = json.loads(body)['db']
+        with sqlite3.connect(database) as connection:
+            event = json.loads(connection.execute('SELECT payload FROM events').fetchone()[0])
+        self.assertEqual(event['processing_method'], 'rules')
+
     def test_other_loopback_port_is_a_different_origin(self):
         with patch("wechat_tracker.console.handler.start_service") as start:
             status, _, _ = self.request(
