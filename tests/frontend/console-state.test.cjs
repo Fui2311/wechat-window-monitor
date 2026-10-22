@@ -11,27 +11,29 @@ function deferred() {
   const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
   return {promise, resolve, reject};
 }
-function harness(storage = new Map()) {
+function harness(storage = new Map(), realRenderers = false) {
   const elements = new Map();
   function element() {
     const classes = new Set();
-    return {value:'', textContent:'', disabled:false, checked:false, options:[], style:{},
+    let html = '', text = '';
+    return {value:'', disabled:false, checked:false, options:[], style:{},
       querySelector:()=>({className:''}),
       classList:{add:x=>classes.add(x), remove:x=>classes.delete(x), contains:x=>classes.has(x),
         toggle:(x, flag)=>flag ? classes.add(x) : classes.delete(x)},
       setAttribute(){}, appendChild(child){this.options.push(child);}, replaceChildren(){},
-      set innerHTML(value){this.options=[];}, get innerHTML(){return '';}};
+      set textContent(value){text=String(value);html='';this.options=[];}, get textContent(){return text;},
+      set innerHTML(value){html=value;text='';this.options=[];}, get innerHTML(){return html;}};
   }
   const get = id => {if (!elements.has(id)) elements.set(id, element()); return elements.get(id);};
-  const ctx = vm.createContext({console:{error(){}, warn(){}}, URL, URLSearchParams, Date,
+  const ctx = vm.createContext({console:{error(){}, warn(){}}, URL, URLSearchParams, Date, Blob,
     localStorage:{getItem:k=>storage.get(k) ?? null, setItem:(k,v)=>storage.set(k,v)},
     document:{getElementById:get, addEventListener(){}, createElement:element,
       querySelectorAll:()=>['llmBaseUrl','llmModel','llmTimeout','llmKeyEnv','llmApiKey','llmClearKey','llmDisableThinking'].map(get)},
     request:()=>{throw new Error('unexpected request');}, post:()=>{throw new Error('unexpected post');}});
   vm.runInContext(source + `\napiGet = url => request(url); apiPost = (url, body) => post(url, body);
-    renderEvents = () => {}; renderOutbox = () => {}; showToast = () => {};
+    ${realRenderers ? '' : 'renderEvents = () => {}; renderOutbox = () => {};'} showToast = () => {};
     globalThis.app = {state, selectDatabase, loadDatabases, loadEvents, loadOutbox, openEmailPreview,
-      renderProcessing, saveProcessing, confirmSendService, refreshStatus, formatTime, formatClockTime, formatCaptureTime, refreshConsoleData, controlService};`, ctx);
+      renderProcessing, saveProcessing, confirmSendService, refreshStatus, formatTime, formatClockTime, formatCaptureTime, refreshConsoleData, controlService, loadServices, renderEvents, serviceStatusView, exportCalendar};`, ctx);
   return {ctx, app:ctx.app, get, storage};
 }
 const db = path => ({path, label:path, group_name:path, is_active:path==='A'});
@@ -319,4 +321,120 @@ test('optional LLM settings follow initial mode and preserve the user disclosure
   const initialLlm=harness();initialLlm.app.renderProcessing({processing_mode:'llm',settings_shared:true});
   assert.equal(initialLlm.get('llmSettings').open,true);
   assert.equal(initialLlm.get('llmModel').disabled,true);
+});
+
+test('service list recovers after a transient error when successful data has not changed', async () => {
+  const {ctx,app,get}=harness();
+  ctx.request=async()=>({services:[]});await app.loadServices();
+  assert.match(get('servicesTableBody').innerHTML,/未发现/);
+  ctx.request=async()=>{throw new Error('temporary');};await app.loadServices();
+  assert.match(get('servicesTableBody').innerHTML,/获取服务列表失败/);
+  ctx.request=async()=>({services:[]});await app.loadServices();
+  assert.doesNotMatch(get('servicesTableBody').innerHTML,/获取服务列表失败/);
+  assert.match(get('servicesTableBody').innerHTML,/未发现/);
+});
+
+test('empty lectures recover from an error even when the next successful response is still empty', async () => {
+  const {ctx,app,get}=harness(new Map(),true);app.selectDatabase('empty');
+  ctx.request=async()=>({events:[]});await app.loadEvents();
+  assert.match(get('eventsListContainer').innerHTML,/未找到讲座/);
+  ctx.request=async()=>{throw new Error('temporary');};await app.loadEvents();
+  assert.match(get('eventsListContainer').textContent,/读取失败/);
+  ctx.request=async()=>({events:[]});await app.loadEvents();
+  assert.match(get('eventsListContainer').innerHTML,/未找到讲座/);
+  assert.equal(app.state.lastDataErrors['讲座数据'],undefined);
+});
+
+test('empty lecture guidance follows search, history, demo and current-source context', () => {
+  const {app,get}=harness(new Map(),true);
+  app.state.selectedDb='empty';app.state.config.group='Managed';
+  const selected={path:'empty',is_active:false,group_name:'History'};app.state.databases=[selected];
+  app.renderEvents();assert.match(get('eventsListContainer').innerHTML,/只读展示/);
+  assert.doesNotMatch(get('eventsListContainer').innerHTML,/启动预览/);
+  selected.is_active=true;app.renderEvents();assert.match(get('eventsListContainer').innerHTML,/启动预览/);
+  selected.is_demo=true;selected.is_active=false;app.renderEvents();assert.match(get('eventsListContainer').innerHTML,/重新运行 Demo/);
+  app.state.searchQuery='absent';app.renderEvents();assert.match(get('eventsListContainer').innerHTML,/清除搜索/);
+});
+
+test('only confirmed monitoring is green and header and table use the same status projection', async () => {
+  const {ctx,app,get}=harness();
+  for (const [status,running,label] of [
+    ['starting',true,'服务启动中'],['waiting_for_weixin',true,'等待微信窗口'],
+    ['monitoring',true,'监控中'],['unknown',true,'采集待确认'],
+    ['database_error',false,'数据库异常'],['stopped_or_unresponsive',false,'停止或无响应']]) {
+    const service={status,running,data_dir:'/fixture',group:'Fixture'};
+    ctx.request=async url=>url==='/api/status'?{service,config:{group:'Fixture'}}:{services:[service]};
+    await app.refreshStatus();await app.loadServices();
+    assert.equal(get('serviceStatusText').textContent,label);
+    assert.ok(get('servicesTableBody').options[0].innerHTML.includes(label));
+    assert.equal(app.serviceStatusView(service).level==='success',status==='monitoring');
+  }
+});
+
+test('service rows update visible identity and processing results even if lifecycle state is unchanged', async () => {
+  const {ctx,app,get}=harness();
+  let service={data_dir:'/fixture',group:'Old',pid:10,running:false,processing_last_method:'rules'};
+  ctx.request=async()=>({services:[service]});await app.loadServices();
+  assert.match(get('servicesTableBody').options[0].innerHTML,/Old/);
+  service={...service,group:'New',pid:20,is_current:true,processing_last_method:'llm'};
+  await app.loadServices();const row=get('servicesTableBody').options[0].innerHTML;
+  assert.match(row,/New/);assert.match(row,/>20</);assert.match(row,/当前/);assert.match(row,/LLM 成功/);
+});
+
+function calendarHarness() {
+  const h=harness();h.downloads=[];h.revoked=[];h.notices=[];
+  h.ctx.URL=class extends URL {
+    static createObjectURL(blob){assert.ok(blob.size>0);return 'blob:fixture';}
+    static revokeObjectURL(url){h.revoked.push(url);}
+  };
+  h.ctx.setTimeout=callback=>callback();
+  h.ctx.document.body={appendChild(){}};
+  h.ctx.document.createElement=()=>({click(){h.downloads.push({href:this.href,name:this.download});},remove(){}});
+  h.ctx.notice=(message,type)=>h.notices.push({message,type});
+  vm.runInContext('showToast=(message,type)=>notice(message,type);',h.ctx);
+  return h;
+}
+
+test('calendar export reports HTTP errors without downloading an error document', async () => {
+  const h=calendarHarness();
+  h.ctx.fetch=async()=>({ok:false,status:503,text:async()=>JSON.stringify({error:'数据库暂时不可读'})});
+  await h.app.exportCalendar();
+  assert.equal(h.downloads.length,0);
+  assert.match(h.notices.at(-1).message,/数据库暂时不可读/);
+  assert.equal(h.notices.at(-1).type,'error');
+  assert.equal(h.get('btnExportIcs').disabled,false);
+});
+
+test('calendar export downloads the captured selected source and releases its object URL', async () => {
+  const h=calendarHarness();h.app.state.selectedDb='history A';
+  h.ctx.fetch=async url=>{assert.equal(url,'/api/calendar/export?db=history%20A');return {ok:true,text:async()=>'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n'};};
+  await h.app.exportCalendar();
+  assert.equal(h.downloads.length,1);assert.equal(h.downloads[0].name,'lectures.ics');
+  assert.deepEqual(h.revoked,['blob:fixture']);
+  assert.match(h.notices.at(-1).message,/请求浏览器下载/);
+  assert.equal(h.get('btnExportIcs').disabled,false);
+});
+
+test('late calendar responses after source change or shutdown cannot trigger a download', async () => {
+  for (const action of ['change','roundtrip','shutdown']) {
+    const h=calendarHarness(),pending=deferred();h.app.state.selectedDb='A';
+    h.ctx.fetch=()=>pending.promise;
+    const first=h.app.exportCalendar();await h.app.exportCalendar();
+    assert.equal(h.get('btnExportIcs').disabled,true);
+    if(action==='shutdown')h.app.state.isConsoleStopped=true;
+    else {h.app.selectDatabase('B');if(action==='roundtrip')h.app.selectDatabase('A');}
+    pending.resolve({ok:true,text:async()=>'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n'});await first;
+    assert.equal(h.downloads.length,0);
+    assert.equal(h.app.state.calendarExportBusy,false);
+  }
+});
+
+test('empty or invalid calendar responses explain why no file is downloaded', async () => {
+  for (const [content,notice] of [['BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n',/没有可导出的明确活动时间/],['unexpected HTML',/未返回有效日历/]]) {
+    const h=calendarHarness();h.ctx.fetch=async()=>({ok:true,text:async()=>content});
+    await h.app.exportCalendar();
+    assert.equal(h.downloads.length,0);
+    assert.match(h.notices.at(-1).message,notice);
+    assert.equal(h.get('btnExportIcs').disabled,false);
+  }
 });
