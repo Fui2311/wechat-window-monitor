@@ -13,6 +13,8 @@ import urllib.error
 import urllib.request
 import urllib.parse
 
+from console_fixtures import isolated_console
+
 from wechat_tracker.web import WebControlHandler, WebControlServer
 from wechat_tracker.cli import main
 
@@ -24,6 +26,9 @@ class WebControlReviewTests(unittest.TestCase):
         self.addCleanup(startup.stop)
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
+        isolation = isolated_console(self.temporary.name)
+        isolation.__enter__()
+        self.addCleanup(isolation.__exit__, None, None, None)
         self.config_path = Path(self.temporary.name) / "config.toml"
         self.config_path.write_text('group = "alpha"\ndata_dir = "state"\nreminder_minutes = []\n')
         self.server = WebControlServer(("127.0.0.1", 0), WebControlHandler, self.config_path)

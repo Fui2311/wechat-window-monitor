@@ -12,6 +12,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from console_fixtures import isolated_console
+
 from wechat_tracker.config import load_config
 from wechat_tracker.engine import Engine
 from wechat_tracker.store import Store
@@ -23,6 +25,9 @@ class CapturedMessagesTests(unittest.TestCase):
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
         cls.root = Path(cls.temp.name)
+        isolation = isolated_console(cls.root)
+        isolation.__enter__()
+        cls.addClassCleanup(isolation.__exit__, None, None, None)
         cls.config_path = cls.root / "config.toml"
         cls.config_path.write_text(f'group = "alpha"\ndata_dir = {json.dumps(str(cls.root / "data"))}\nreminder_minutes = []\n')
         cls.db_path = cls.root / "data/tracker.sqlite3"

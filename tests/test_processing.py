@@ -9,6 +9,8 @@ from unittest.mock import patch
 import urllib.request
 import urllib.error
 
+from console_fixtures import isolated_console
+
 from wechat_tracker.config import load_config, update_toml_root_keys
 from wechat_tracker.engine import Engine
 from wechat_tracker.processing import (ProcessingError, extract_llm, key_path, process_message,
@@ -48,6 +50,9 @@ class ProcessingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        isolation = isolated_console(self.temp.name)
+        isolation.__enter__()
+        self.addCleanup(isolation.__exit__, None, None, None)
         self.path = Path(self.temp.name) / 'config.toml'
         self.path.write_text('group = "测试群"\ndata_dir = "state"\n# preserve me\n[email]\nsmtp_host = "smtp.example.com"\n')
         self.config = load_config(self.path)

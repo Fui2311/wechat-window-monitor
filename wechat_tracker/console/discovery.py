@@ -5,6 +5,7 @@ from ..config import load_config
 from ..paths import PROJECT_ROOT
 from ..service import read_status
 from .presentation import _sanitize_service
+from .discovery_policy import ignored_discovery_path
 
 def _list_services(active_config: dict, active_config_path: str) -> list[dict]:
     services = []
@@ -39,9 +40,7 @@ def _list_services(active_config: dict, active_config_path: str) -> list[dict]:
             sub_resolved = str(sub.resolve())
             if sub_resolved in seen_dirs:
                 continue
-            sub_name = sub.name.lower()
-            if any(any(word in part.lower() for word in ("backup", "before", "previous", "last-good"))
-                   or part.startswith(".") for part in sub.relative_to(sdir).parts):
+            if ignored_discovery_path(sub.relative_to(sdir)):
                 continue
             svc_file = sub / "service.json"
             if svc_file.is_file():

@@ -2,7 +2,7 @@
 
 本地采集指定微信群的可读消息，识别讲座与学术报告，保留原文，并生成邮件通知与日历文件。提供命令行和浏览器控制台，支持 macOS Accessibility、Windows UIAutomation 和离线 JSONL 输入。
 
-**正式版本：1.1.0 · Python 3.11+ · 核心运行时无第三方 Python 依赖。** 安装包见 [GitHub Releases](https://github.com/Fui2311/wechat_tracking/releases)。
+**正式版本：1.1.1 · Python 3.11+ · 核心运行时无第三方 Python 依赖。** 安装包见 [GitHub Releases](https://github.com/Fui2311/wechat_tracking/releases)。
 
 默认使用本地规则、仅预览邮件；启用 LLM 后才向所配置的兼容接口发送待分析正文，显式启用发信后才投递 SMTP。不会向微信群发送消息或代替用户报名。
 
@@ -40,7 +40,7 @@ Windows PowerShell 用 `python` 创建环境，激活命令为 `.\.venv\Scripts\
 
 ### macOS 实时部署
 
-推荐下载 Release 中的 `WeChatLectureTracker-macOS-1.1.0.zip`，解压后执行：
+推荐下载 Release 中的 `WeChatLectureTracker-macOS-1.1.1.zip`，解压后执行：
 
 ```bash
 python3 mac/verify-package.py .

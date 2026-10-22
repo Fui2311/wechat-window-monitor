@@ -9,6 +9,8 @@ from unittest.mock import patch
 import urllib.request
 import urllib.error
 
+from console_fixtures import isolated_console
+
 from wechat_tracker.web import WebControlServer, WebControlHandler
 from wechat_tracker.config import (
     find_default_config_path,
@@ -27,6 +29,9 @@ class WebDashboardTests(unittest.TestCase):
         cls.addClassCleanup(startup.stop)
         cls.temp_dir = tempfile.TemporaryDirectory()
         cls.base_path = Path(cls.temp_dir.name)
+        isolation = isolated_console(cls.base_path)
+        isolation.__enter__()
+        cls.addClassCleanup(isolation.__exit__, None, None, None)
         cls.config_path = cls.base_path / "config.toml"
         cls.data_dir = cls.base_path / "state" / "group-default"
         cls.data_dir.mkdir(parents=True, exist_ok=True)
@@ -279,7 +284,10 @@ class WebDashboardTests(unittest.TestCase):
         backup_dir = self.base_path / "state" / "web-repair-backup-20261016-174725"
         backup_dir.mkdir(parents=True, exist_ok=True)
         backup_db = backup_dir / "tracker.sqlite3"
-        backup_db.touch()
+        store = Store(backup_db)
+        store.db.execute("INSERT INTO capture_state VALUES (?,?)", ("备份群", "2026-10-22T00:00:00Z"))
+        store.db.commit()
+        store.close()
 
         status, _, body = self._get("/api/databases")
         self.assertEqual(status, 200)
@@ -427,7 +435,7 @@ class WebDashboardTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        with patch("wechat_tracker.console.handler.read_status") as mock_read:
+        with patch("wechat_tracker.console.discovery.read_status") as mock_read:
             def _fake_read(cfg):
                 if "sibling-tracker" in cfg.get("data_dir", ""):
                     return {
@@ -446,7 +454,7 @@ class WebDashboardTests(unittest.TestCase):
             data = json.loads(body.decode("utf-8"))
             self.assertTrue(data.get("ok"))
             svcs = data.get("services", [])
-            self.assertTrue(len(svcs) >= 2)
+            self.assertEqual(len(svcs), 2)
             sibling = next((s for s in svcs if "sibling-tracker" in s.get("data_dir", "")), None)
             self.assertIsNotNone(sibling)
             self.assertEqual(sibling["group"], "学术通知测试群")
