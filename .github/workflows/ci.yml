@@ -21,6 +21,11 @@ jobs:
       - run: node --check wechat_tracker/resources/web/http.js
       - run: node --check wechat_tracker/resources/web/app.js
       - run: node --test tests/frontend/*.test.cjs
+      - run: npm ci --prefix frontend
+      - run: npm test --prefix frontend
+      - run: npm run format:check --prefix frontend
+      - run: npm run build --prefix frontend
+      - run: git diff --exit-code -- wechat_monitor/resources/dashboard
   test:
     timeout-minutes: 10
     strategy:
@@ -36,11 +41,10 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: python scripts/sync-version.py --check
       - run: python -m pip install -e ".[dev]"
-      - run: python -m ruff check wechat_tracker tests mac scripts
+      - run: python -m ruff check wechat_monitor wechat_tracker tests mac scripts
       - run: python -m unittest discover -s tests -v
       - run: python -m build
       - run: python scripts/check-release.py
-      - run: python scripts/build-mac-package.py
       - uses: actions/upload-artifact@v4
         with:
           name: packages-${{ matrix.os }}-py${{ matrix.python }}
@@ -50,9 +54,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Compile native helpers (desktop permissions are tested separately)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install .
+      - name: Compile standalone capture App (desktop permissions tested separately)
         run: |
-          mkdir -p dist/native
-          xcrun swiftc -O -swift-version 5 wechat_tracker/resources/mac-capture.swift -o dist/native/wechat-capture
-          xcrun swiftc -O -swift-version 5 wechat_tracker/resources/mac-credentials.swift -o dist/native/wechat-credentials
-          dist/native/wechat-capture self-test
+          mkdir -p dist
+          python scripts/build-monitor-helper.py --output dist/WindowMonitorCapture.app

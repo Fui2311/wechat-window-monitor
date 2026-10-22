@@ -20,6 +20,9 @@ config.toml
 
 # Local LLM credentials (never commit)
 *.llm-key
+node_modules/
+.model-key
+model.json
 
 # Local diagnostics and generated document previews
 .ruff_cache/

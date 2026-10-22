@@ -53,6 +53,9 @@ def install_credential_helper():
 
 
 def main():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    if project["name"] != "wechat-lecture-tracker":
+        raise SystemExit("This legacy installer does not deploy Window Monitor. Use pip install . and scripts/build-monitor-helper.py; existing lecture installation was not changed.")
     if sys.platform != "darwin" or sys.version_info < (3, 11):
         raise SystemExit("Requires a native macOS Python 3.11+ installation")
     silicon = subprocess.run(["/usr/sbin/sysctl", "-n", "hw.optional.arm64"], capture_output=True, text=True)

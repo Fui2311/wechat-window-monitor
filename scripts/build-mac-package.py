@@ -28,7 +28,10 @@ def check_document_links(contents):
 
 
 def build():
-    version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    if project["name"] != "wechat-lecture-tracker":
+        raise ValueError("Legacy lecture package builder; use python -m build for Window Monitor")
+    version = project["version"]
     name = "WeChatLectureTracker-macOS-" + version
     files = {name: ROOT / name for name in ("README.md", "pyproject.toml", "CHANGELOG.md", "config.example.toml")}
     for doc_name in ("architecture.md", "deployment.md", "macos.md", "email.md", "llm-processing.md",

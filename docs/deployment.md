@@ -1,101 +1,46 @@
-# 部署、升级与发布（1.1.2）
+# 部署、升级与发布（2.0.0）
 
-## 部署选择
+## 安装
 
-| 场景 | 安装方式 | 需要 |
-| --- | --- | --- |
-| macOS 日常采集 | Release 的 Mac 源码安装 ZIP | Python 3.11+、Apple Command Line Tools、微信登录及辅助功能授权 |
-| Windows 日常采集 | 仓库源码或 wheel + 当前用户登录任务 | Python 3.11+、PowerShell/.NET UIAutomation、Windows 微信交互式桌面 |
-| 开发/离线回放 | 源码 `pip install -e '.[dev]'` 或 wheel | Python 3.11+；无需微信、Swift、SMTP 或模型密钥 |
-
-Mac 安装 ZIP、Python wheel 和源码 sdist 都不是预装聊天数据的运行环境。wheel 包含所有跨平台资源，但不代替 Mac 原生辅助程序的本机编译与权限授权。
-
-## 显式配置与数据目录
-
-使用 `wechat-track init config.local.toml --platform windows --group "精确群名"` 创建 Windows 配置；`--platform macos` 生成指向默认安装辅助程序的 Mac 配置，`--platform jsonl` 用包内样例离线输入。已有文件拒绝覆盖。
-
-`data_dir` 相对于配置文件目录解析。不同测试/群应使用独立配置与数据目录；只改群名而复用原库会混淆来源。GUI 切群流程会建立群目录和标识并保留旧历史。
-
-所有日常命令建议显式传 `--config`。不传时依次寻找：Mac Application Support 已安装配置、当前目录 `config.local.toml`、当前目录 `config.toml`、当前目录示例、仓库示例。故在 Mac 源码目录运行时，默认配置也可能来自已安装版本。
-
-## macOS 安装和使用
-
-1. 下载并核对 Release 提供的 ZIP 外部 SHA256，再解压。安装原生 Python 3.11+；Apple Silicon 使用 arm64 Python，Intel 使用 x86_64。运行 `xcode-select --install` 安装编译工具。
-2. 在解压目录执行 `python3 mac/verify-package.py .`，检查所有文件的完整性，再运行 `bash mac/install.command`。安装器会重复检查，编译 Swift、进行本机 ad-hoc 签名并复制 Python 模块。
-3. 编辑 `~/Library/Application Support/WeChatLectureTracker/config.toml` 的 `group`。执行下列命令打开采集 App；在“系统设置 → 隐私与安全性 → 辅助功能”允许该 App。按实际系统提示授权启动终端。
+Python 3.11+，建议独立虚拟环境。源码安装执行 `python -m pip install .`；wheel安装：
 
 ```bash
-bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" authorize
-bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" verify --offline
+python -m pip install 路径/wechat_window_monitor-2.0.0-py3-none-any.whl
+wechat-monitor --version
+wechat-monitor --data-dir ./state/my-workspace serve --open
 ```
 
-4. 登录微信，将目标群打开为独立、非最小化窗口；探针必须核对精确群名、进程和唯一消息列表。就绪后再安装当前用户登录预览服务：
+默认127.0.0.1:8765，不允许外网监听。不要把控制台端口代理到公网。本地同目录只允许运行一个监控进程；不同目录可选不同端口。Ctrl+C正常关闭并等待正在执行的模型/捕获结束。关闭浏览器不停止Python进程。
+
+## macOS 原生辅助程序
+
+在本机安装Apple Command Line Tools（`xcode-select --install`），运行：
 
 ```bash
-bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" probe
-bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" install
-bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" status
-bash "$HOME/Library/Application Support/WeChatLectureTracker/mac/manage.command" web --open
+python scripts/build-monitor-helper.py
+open "$HOME/Applications/WeChat Window Monitor Capture.app"
 ```
 
-Python、配置、状态、管理脚本位于 `~/Library/Application Support/WeChatLectureTracker/`。采集 App 位于 `~/Applications/WeChat Lecture Tracker Capture.app`；凭据 App 独立存放，避免只更新采集器就重建 Keychain 身份。后台任务位于 `~/Library/LaunchAgents/local.wechat-lecture-tracker.<群名摘要>.plist`，随当前用户登录会话运行。
+脚本只编译、签名独立App，不启动采集、不安装登录任务、不修改旧讲座辅助App。若目标App已存在会拒绝覆盖，请先选择不同的 `--output /完整路径/NewCapture.app`，或保留旧副本后自行更换。系统设置中给新App辅助功能权限；窗口设置填实际可执行文件路径。保持微信登录、目标会话为独立非最小化窗口，点击“检查窗口”，确认再开始监控。
 
-停止用 `manage.command stop`，恢复用 `start`，重启用 `restart`；`uninstall` 移除登录任务并停止监控，保留配置、数据库和凭据。关闭浏览器或 HTTP 控制台不停止独立监控。
+macOS因辅助功能和签名身份依赖目标机器，不提供跨机器可直接授权的预编译二进制；源码和构建脚本随源码包提供。wheel包含原生Swift源码，也可将已下载源码中的构建脚本配合安装环境运行。
 
-源码开发者使用 `python scripts/build-mac-package.py` 生成带清单 ZIP，再解压安装；不要在无 `SHA256SUMS.txt` 的开发目录直接运行安装器。编译器/SDK 不匹配时先核对 `xcrun swiftc --version`、`xcrun --show-sdk-path` 和已选 Command Line Tools；更正工具链后重试。安装器编译失败不会停止已有采集服务。
+## Windows
 
-## Windows 安装和使用
+保持微信交互桌面会话，PowerShell/.NET UIAutomation可用。窗口设置选择Windows UIAutomation；进程名默认Weixin，必要时在高级设置填写实际进程名。只支持现有探针能证明消息列表结构的会话，精确标题相同但结构不同会拒绝读取，不猜测替代窗口。
 
-在 PowerShell 中：
+## 模型
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install .
-.\.venv\Scripts\python.exe -m wechat_tracker init config.local.toml --platform windows --group "你的精确群名"
-.\.venv\Scripts\python.exe -m wechat_tracker --config config.local.toml probe
-.\.venv\Scripts\python.exe -m wechat_tracker --config config.local.toml watch --once --include-existing
-.\.venv\Scripts\python.exe -m wechat_tracker --config config.local.toml service install
-.\.venv\Scripts\python.exe -m wechat_tracker --config config.local.toml service status
-.\.venv\Scripts\python.exe -m wechat_tracker --config config.local.toml web --open
-```
+设置兼容Chat Completions基础URL、模型名称、API Key或密钥环境变量名。远程HTTPS、本机可HTTP；不跟随重定向。接口必须支持 `response_format=json_object`，输出严格JSON。保存设置不调用接口。目标生成、语义测试和新消息识别是显式/已启用的调用；本地识别不调用模型。
 
-从 wheel 安装时将 `pip install .` 换为 `pip install 路径\wechat_lecture_tracker-1.1.2-py3-none-any.whl`。当前用户登录任务要使用创建时的 Python 路径；不要安装后移动或删除虚拟环境。需保持微信在线及目标独立群窗口可读，注销/锁屏不能视作可靠采集环境。更多细节见 [服务说明](service.md)。
+生成规则后核对JSON，尤其关键词无法表达的语义边界。任意生成代码不会执行。失败消息在记录页标识，点击重试后需运行监控才会继续处理。
 
-## 邮箱和 LLM
+## 升级、备份、旧版本
 
-默认只预览。`email setup` 实际发送一封测试邮件，成功后保存本机凭据。日常服务用 `service install --send` 启用真实投递；恢复预览可用控制台或重新 `service install`，不加 `--send`。`tick --send` 是显式的一次真实投递，不应与后台发信服务并发操作同一库。
+停止该工作空间进程，确认结束；备份完整数据目录及当前虚拟环境/安装版本，再安装新wheel。数据库原文、规则、结果和本地密钥一起保留在数据目录，不把备份上传。升级后默认停止，用离线检查和窗口探针核对后再开始。
 
-LLM 通过控制台设置 `processing_mode=llm`、接口地址和模型；密钥保存在配置旁独立的 `.llm-key` 文件或所指定环境变量中，不进入 TOML/Git。远程接口必须 HTTPS，本机兼容服务可用 HTTP。模型测试会向该接口发送输入的测试文字，结果不入库、不发信；常驻模式仅处理新入库消息，不因切换模型自动重算所有历史。接口失败使用本地规则，原文保留。详见 [模型处理](llm-processing.md)。
+旧 wechat_tracking 讲座版的数据库、SMTP设置和常驻服务不会自动导入或控制。旧应用可以继续独立使用，但不要与新应用对同一桌面窗口同时执行前台动作。本产品默认只读捕获，不自动展开转发、不滚动/恢复窗口。旧mac/install.command、build-mac-package.py和讲座命令只保留为历史兼容工具，部署本产品请按本指南。
 
-## 从 0.4.0 升级与回滚
+## 发布验收
 
-1. 记录当前配置、数据目录、Python/辅助程序路径、服务运行状态及发送模式。用原入口执行 `service stop` 或 Mac `manage.command stop`，确认实例已停止。
-2. 保留当前程序副本；在服务停止时复制整个数据目录和配置到只有当前用户可读的备份目录。凭据仍留在原本机安全存储；不得上传备份。
-3. Mac 运行新 ZIP 安装器；它会保留旧 App 和旧 Python 包的时间戳备份，并保留已有配置。Windows 在既有虚拟环境安装新 wheel，或保留旧环境并为新环境重新安装登录任务。
-4. 先执行离线验证，再用探针检查新程序的当前窗口读取；用预览模式启动并核对原文、通知和队列，然后恢复此前明确选择的发送模式。
-
-本次模块拆分不改变 SQLite 表格式。已有 `lecture-notice-v1` 数据库无需重算。更早策略的未发信库若需要重算，须停止服务后运行：
-
-```bash
-wechat-track --config config.local.toml rebuild-analysis
-```
-
-命令创建并校验备份；有已发送或发送中任务时拒绝自动重算，避免不受控重复通知。重算使用当前本地规则，保持原始消息、指纹和旧任务审计；不按当前模型对历史重新调用接口。
-
-回滚时先停止新服务，恢复先前程序/环境和对应启动入口。保留升级后的数据库副本；若仅回退代码，数据库格式仍兼容，但处理策略和新功能可能不同，应先以预览检查。不要将升级前旧数据库直接覆盖到已发生真实投递的库，否则可能再次发送旧任务。损坏库处理见 [数据库恢复](database-recovery.md)。
-
-## 验收和排错
-
-| 现象 | 检查 |
-| --- | --- |
-| 有心跳但没有新消息 | 同时核对 `last_capture_at`、`status`、`last_error` 和窗口可读性；循环心跳不代表采集成功 |
-| `target_window_not_ready` | 微信登录、精确群名、独立窗口、最小化/锁屏状态 |
-| `message_list_not_unique` | 按当前微信版本检查 AX/UIA 结构，显式配置列表标识；不要放宽到任意列表 |
-| 控制台仍显示旧版本行为 | 核对进程使用的 Python、模块路径和配置；源码修改不会自动替换已安装副本 |
-| 通知存在但没收到邮件 | 核对预览/发信模式、凭据授权、队列状态和退避时间；SMTP 接受不等于进入收件箱 |
-| 端口被占用 | 保留已有控制台或使用 `web --port 8089`；不要杀死所有 Python 进程 |
-| 转发只有摘要 | 查看是否实际展开、父卡片来源绑定和 `children`；摘要/附件名不能当正文 |
-
-开发发布请使用完整 Git 仓库。修改 `pyproject.toml` 的稳定版本号后，运行 `python scripts/sync-version.py --write`，审查差异，并先执行 `python scripts/sync-version.py --check`；该工具同步当前组件和文档标签，不改历史变更记录。Mac ZIP 的文件清单按安装用途提供，开发脚本需从完整仓库取得。
-
-发布验收由 `ruff`、全量测试、wheel 安装后冒烟验证、源码包重建和 Mac ZIP 清单检查组成。原生编译与实际桌面采集分开记录；目标机器还需实测新消息、重复轮询、窗口恢复、重启和所选邮箱投递。只在测试群进行主动转发和恢复实验，不用测试结果承诺全历史完整。
+Node22.12+/24执行npm ci、test、build；Python执行全部回归、ruff、版本同步检查、构建和check-release.py。构建产物包括Vue资源、通用包及继承的原生资源；安装冒烟在仓库外临时目录验证，无真实桌面、模型或SMTP调用。发布记录必须区分本地合成验证、平台CI与真实桌面采集，不能用假捕获宣称私聊/公众号实机全兼容。

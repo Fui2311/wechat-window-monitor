@@ -1,89 +1,21 @@
-# 架构与扩展契约（1.1.2）
+# 架构与扩展契约（2.0.0）
 
-本项目围绕“指定群的捕获证据 → 通知记录 → 可审计投递”组织代码。部署入口负责选择平台，业务用例通过接口调用存储、处理器和发信器。模块划分见根目录 README。
+产品入口为 wechat_monitor，而非继承的讲座业务。窗口注册器维护独立ID、精确名称、目标、采集配置与活动规则；运行时每个窗口有自己的停止事件和线程。捕获端口串行读取原生窗口，识别与存储按窗口作用域隔离。
 
-```mermaid
-flowchart LR
-  AX[macOS AX / Windows UIA / JSONL] --> Normalize[来源核验与标准化]
-  Normalize --> Capture[Tracker.capture_snapshot]
-  CLI[CLI / MonitorService] --> Capture
-  Capture --> Ingest[Tracker.ingest]
-  Ingest --> Processor[MessageProcessor]
-  Processor --> Rules[本地规则]
-  Processor --> LLM[LLM 适配器与规则回退]
-  Ingest --> Events[EventRegistry]
-  Events --> Repo[Repository 接口]
-  Repo --> SQLite[SQLiteRepository / Store]
-  Dispatch[NotificationDispatcher] --> Repo
-  Dispatch --> Render[纯文本 / HTML 格式化]
-  Dispatch --> Sender[MailSender 接口]
-  Sender --> SMTP[SMTP / TLS]
-  Browser[app.js 页面状态与 DOM] --> ViewRules[presentation.js 纯显示规则]
-  Browser --> Client[http.js 注入请求函数]
-  Client --> HTTP[本机 HTTP 控制台]
-  HTTP --> Queries[只读查询与状态投影]
-  Queries --> SQLite
-  HTTP --> Control[服务 / 配置控制接口]
-```
+## 识别链
 
-## 依赖方向
+目标与模式 -> RuleGenerator -> JSON schema验证 -> 不可变草稿版本 -> 试测 -> activate -> RecognitionCore。LocalCore直接执行有限字符串DSL；SemanticCore将完整保存规则与已读证据交给JsonModel，要求命中证据逐字来自输入。生成器、识别器不拥有HTTP/UI、数据库或桌面权限。
 
-- `domain` 只使用标准库计算身份、校验结构和时间，不做 I/O。`domain.policy` 定义落盘的分析策略版本。
-- `application` 只导入领域逻辑、纯展示函数和 `ports`。`Tracker` 接收仓储、分析处理器、重算规则分析器、发送器和可替换时钟；不直接读配置或访问 SQL。
-- `persistence.SQLiteRepository` 实现仓储契约。`Store` 管连接、建表、完整性检查及备份；仓储管查询、消息去重插入和队列原子领取。
-- `extraction.settings` 管校验、热加载、可选共享设置引用与密钥写入；`llm` 管受限 HTTP 和证据核对；`pipeline` 管模式选择与失败回退。`processing.py` 保留旧导入入口。
-- `presentation.notifications` 同时用于队列发送和网页预览。SMTP、TLS、邮箱配置校验位于 `notify.py`，业务层不直接导入传输实现。
-- `console.discovery_policy` 集中处理发现根内的相对路径过滤与目录剪枝；数据源查询和服务发现共用策略，明确的活动/服务根仍按配置处理。
-- `console.handler` 管请求校验、路由和控制操作；`queries` 管只读 SQL；`discovery` 发现受管理实例；`presentation` 白名单投影状态；`server` 管 HTTP 生命周期。`web.py` 保留公共入口。
-- `engine.Engine` 是组合根，装配默认适配器，保留 `Engine(store, config)` 调用形式。平台采集、常驻服务和命令行仍使用这一入口。
+模型连接失败、输出错误或证据不成立时消息标记error，保留原文，可明确重试；没有静默改用讲座规则或把失败记为不命中。目标/模式变化清除active_rule；生成期间配置变化会拒绝保存过期草稿。规则启用、配置变更与启动在应用锁内协调；运行中禁止修改规则和采集配置。
 
-依赖边界通过 `tests/test_application_boundaries.py` 检查，并用独立内存仓储执行入库及事务回滚，防止“只换目录、仍依赖 SQLite 全局对象”的回退。
+## 数据边界
 
-## 浏览器模块接口
+SQLite windows/rules/messages表通过window_id关联。精确名称唯一；一帧消息先整体校验来源再写入。指纹忽略观测元数据，重复轮询不重复识别。首次基线默认不分析；成功消息不因规则更新重算。失败重试对当前规则重新排队，结果保留实际rule_id。历史分页使用ID游标，新到消息不挤动后续页。
 
-`resources/web/presentation.js` 导出不可变的 `TrackerPresentation` 接口，接收消息、服务状态和显式时区，负责日期格式化、原始时间保留、HTML 转义、安全报名链接及监控状态投影。它不访问 DOM、存储、网络或控制器状态；格式器缓存只属于模块内部。
+窗口名已有记录后不能更名，应新增窗口，避免来源混合。停机重启保留规则与数据但不隐式恢复监控。当前运行时为单进程本机工作空间，进程锁拒绝同目录第二实例；不是分布式调度系统。
 
-`resources/web/http.js` 导出 `TrackerHttp.createApi(fetchResponse)`。调用方注入请求函数，得到 JSON GET、JSON POST 和文本 GET 三种操作；统一提取 HTTP 错误，原样传播网络失败。加载模块不会发起请求。浏览器注入原生 fetch，测试注入假传输。
+## 交付与扩展
 
-`app.js` 是浏览器组合根与交互控制器，管理数据源、草稿、请求序号、弹窗和 DOM。它从明确的模块接口获得格式化与传输能力，时区包装函数读取当前管理配置后显式传参。页面依次加载 presentation.js、http.js、app.js；服务器仅向闭合白名单提供静态文件，不根据任意用户路径加载模块。源码包、wheel 和 Mac ZIP 都包含这些资源，安装后冒烟逐一请求并验证。
+Vue3 SFC按窗口菜单、新增弹窗、概览、规则、消息、窗口设置、模型设置拆分；api.js集中HTTP，scope.js取消已卸载组件的请求，展示逻辑独立。生产静态文件作为包资源提供，用户无需Node运行时。
 
-纯模块同时提供 CommonJS 导出供 Node 22+ 测试；产品运行仍直接使用普通浏览器脚本，不引入 npm、打包器或第三方运行依赖。交互回归使用同一真实 HTTP 适配器注入假 fetch，验证状态隔离、错误恢复和下载行为。模块契约测试在没有 DOM、存储和网络全局对象的环境中运行。
-
-## 消息与事务
-
-标准输入为 JSON 对象：`group`、`id`、`kind`、`text`、可选 `sender`/`sent_at`、`children` 和 `attachments`。时间必须带时区；缺失时间保持未知。群名只能等于配置中的精确白名单。校验限制嵌套深度、节点数与文本长度。
-
-`observed_at` 和 `source_meta` 是传输证据，不参与稳定内容指纹；子消息递归遵守同一规则。采集器另保存 `capture_seen` 和 `capture_state`，用于首轮基线与重复采样控制。
-
-`ingest` 先检查消息指纹，调用处理器，再在同一仓储事务中插入原文、写通知及创建队列。二次检查通过 `INSERT OR IGNORE` 解决并发重复插入。分析/入队失败会回滚本轮写入，不吞掉原始输入后伪报成功。外部模型调用发生在写事务之外，避免等待网络时持有数据库写锁。
-
-当前 `lecture-notice-v1` 以来源群、来源消息 ID 和实际来源文本生成通知 ID；同主题的新消息独立通知。旧活动记录的版本、取消与提醒兼容逻辑保留在 `EventRegistry`，不用于对当前讲座通知施加入选或完整度门槛。
-
-## 投递与数据所有权
-
-SQLite 表结构沿用旧版，无本次强制迁移：
-
-| 表 | 职责 |
-| --- | --- |
-| `messages` | 原始标准化输入和接收时间 |
-| `events` | 通知/旧活动记录 |
-| `outbox` | 格式快照、版本、原因、计划时间、领取状态、失败计数 |
-| `capture_seen` / `capture_state` | 采集指纹和最后成功采样 |
-| `forward_reads` | 转发展开结果、尝试次数与退避缓存 |
-| `capture_gaps` | 采集缺口起止与原因 |
-
-发信前用条件更新原子领取队列，并验证事件版本；不同连接不能领取同一待发任务。SMTP 在领取事务提交后调用，结果另开事务记账。失败只记录错误类型，避免记录 SMTP 返回的敏感文本；退避从 60 秒指数增长，上限 1 小时，超过 `max_attempts` 标记 `dead`。超过 10 分钟的中断领取可恢复，因而投递语义为至少一次。
-
-`dispatch(send=False)` 不连接 SMTP、不领取或标记为已发送；仍会维护旧版本、关闭的定时提醒和中断任务状态，所以它不是“数据库完全不写入”的查询接口。历史浏览使用 `mode=ro` SQLite 连接，严格不建库或重算。
-
-一个群的数据目录属于一个监控实例，由服务锁和控制通道管理。切群时先探测、暂停旧启动项、停止旧实例、原子保存配置，再使用独立目录；失败尝试恢复原配置和原模式。不要直接改启动项群名后让旧进程继续运行。
-
-## 扩展方法
-
-新增提取器：实现 `MessageProcessor(message, config, *, report) -> list[dict]`，返回保留来源证据的候选通知。通过 `Engine(..., processor=...)` 或 `Tracker(...)` 注入；无需改存储/HTTP。默认管线负责共享场地策略、LLM 响应约束和回退，替换自定义处理器时需自行保持这些契约。
-
-新增存储：实现 `application.ports.Repository`，保证原文/通知/队列同事务和任务原子领取。通过 `Tracker(repository, ...)` 使用，不必创建 `Store`；直接使用 Tracker 时显式传入分析器和发送器。
-
-新增发信渠道：实现 `MailSender` 调用协议，通过 `Engine(..., sender=...)` 注入。预览和失败重试仍由调度器控制，渠道适配器只负责单次提交。
-
-新增平台：在采集适配器实现精确来源核验与标准消息输出，再接入 `capture`/`stream`；不能把桌面控件对象传进业务层。不要用主窗口里任意同名文字证明当前群。
+新识别核心实现recognition/ports.py契约，通过application/runtime选择；新捕获端口实现read/probe，所有帧仍由仓储校验精确名称。无需依赖旧Engine/analyzer。底层AX/UIA继续安全拒绝歧义，不用放宽窗口范围满足泛用。
