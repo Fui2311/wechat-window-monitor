@@ -5,7 +5,7 @@ import unittest
 import subprocess
 from unittest.mock import patch
 
-from wechat_tracker.credentials import apply_credentials, save_credentials, _dpapi, _credential_helper, authorize_credentials
+from wechat_tracker.credentials import apply_credentials, save_credentials, _dpapi, _credential_helper, authorize_credentials, credential_status
 
 FIELDS = dict(smtp_user_env="TEST_WECHAT_USER", smtp_password_env="TEST_WECHAT_PASSWORD",
               from_env="TEST_WECHAT_FROM", to_env="TEST_WECHAT_TO")
@@ -14,6 +14,28 @@ VALUES = dict(smtp_user_env="sender@example.com", smtp_password_env="test-only-p
 
 
 class CredentialsTests(unittest.TestCase):
+    def test_status_follows_source_without_loading_secrets_or_wrong_platform_marker(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+            root = Path(directory)
+            data = root/'source-data'
+            data.mkdir()
+            (data/'email.credentials').write_text('synthetic encrypted marker')
+            source = dict(data_dir=str(data), email=FIELDS, config_path=str(root/'source.toml'), group='来源群')
+            follower = dict(email_credentials_config_path='source.toml', config_path=str(root/'follower.toml'))
+            with patch('wechat_tracker.config.load_config', return_value=source), \
+                    patch('wechat_tracker.credentials._keychain') as keychain, \
+                    patch('wechat_tracker.credentials._dpapi') as dpapi:
+                with patch('wechat_tracker.credentials.sys.platform', 'win32'):
+                    status = credential_status(follower)
+                    self.assertTrue(status['configured'])
+                    self.assertTrue(status['settings_shared'])
+                    self.assertEqual(status['backend'], 'windows_dpapi')
+                    self.assertEqual(status['setup_config_path'], source['config_path'])
+                with patch('wechat_tracker.credentials.sys.platform', 'darwin'):
+                    self.assertFalse(credential_status(follower)['configured'])
+                keychain.assert_not_called()
+                dpapi.assert_not_called()
+
     def test_missing_credentials_do_not_become_configured(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
             self.assertFalse(apply_credentials(dict(data_dir=directory, email=FIELDS)))

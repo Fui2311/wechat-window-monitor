@@ -149,6 +149,38 @@ class WebDashboardTests(unittest.TestCase):
         authorize.assert_called_once()
         send.assert_not_called()
 
+    def test_delivery_backlog_always_describes_managed_database_and_is_read_only(self):
+        before = self.db_path.read_bytes()
+        status, _, body = self._get('/api/service/backlog?db=/ignored/history.sqlite3')
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertEqual(result['group'], self.server.config['group'])
+        self.assertEqual(result['db'], str((Path(self.server.config['data_dir'])/'tracker.sqlite3').resolve()))
+        self.assertGreaterEqual(result['pending'], 1)
+        self.assertIsNotNone(result['oldest_due_at'])
+        self.assertEqual(before, self.db_path.read_bytes())
+
+    def test_send_rejects_group_changed_after_confirmation_without_service_actions(self):
+        with patch('wechat_tracker.console.handler.start_service') as start, \
+                patch('wechat_tracker.console.handler.stop_service') as stop:
+            status, _, body = self._post('/api/service/start_send', {'expected_group': '过时的群名'})
+        self.assertEqual(status, 400)
+        self.assertIn('管理群已变更', json.loads(body)['error'])
+        start.assert_not_called()
+        stop.assert_not_called()
+
+    def test_demo_does_not_inherit_service_from_same_directory(self):
+        handler = object.__new__(WebControlHandler)
+        handler.server = self.server
+        active = dict(data_dir=str(self.data_dir), running=True, send_enabled=True, send_ready=True)
+        with patch('wechat_tracker.console.handler._list_services', return_value=[active]):
+            demo = handler._delivery_service(self.data_dir/'demo.sqlite3')
+            unrelated = handler._delivery_service(self.data_dir/'archive.sqlite3')
+            live = handler._delivery_service(self.data_dir/'tracker.sqlite3')
+        self.assertTrue(demo['simulation'])
+        self.assertEqual(unrelated, {})
+        self.assertTrue(live['running'])
+
     def test_static_app_css(self):
         status, headers, body = self._get("/app.css")
         self.assertEqual(status, 200)

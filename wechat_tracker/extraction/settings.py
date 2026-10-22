@@ -90,6 +90,7 @@ def public_settings(config):
     result = settings(active)
     path = key_path(active)
     result["settings_shared"] = active["processing_settings_shared"]
+    result["settings_source"] = str(active.get("config_path", ""))
     result["api_key_configured"] = bool((path and path.is_file()) or os.environ.get(result["llm_api_key_env"]))
     return result
 
@@ -124,6 +125,9 @@ def prepare_settings(config, body):
 
 
 def save_settings(config, body):
+    active = effective_processing_config(config)
+    if active["processing_settings_shared"]:
+        raise ValueError(f"处理设置由共享配置管理，请在该配置的控制台修改：{active['config_path']}")
     cfg = prepare_settings(config, body)
     path = key_path(config)
     old_key = path.read_text(encoding="utf-8") if path.is_file() else None

@@ -7,6 +7,8 @@ def _delivery_info(job: dict, service: dict, now=None) -> dict:
     result = dict(state=status, attempts=attempts, error=job.get("last_error"), retry_at=None)
     def done(state, label, message):
         return dict(result, state=state, label=label, message=message)
+    if service.get("simulation"):
+        return done("simulation", "演示预览，不会发送", "这是隔离演示数据，可查看邮件预览；启动真实监控不会投递这些任务。")
     if status == "sent":
         return done("sent", "已提交 SMTP", "邮件服务器已接受；若未出现在收件箱，请检查垃圾邮件或稍后刷新邮箱。")
     if status == "dead":

@@ -35,6 +35,12 @@ class DeliveryStatusTests(unittest.TestCase):
         self.assertEqual(info['state'],'sent')
         self.assertIn('SMTP',info['label'])
 
+    def test_demo_never_suggests_service_start_or_real_delivery(self):
+        for status in ['pending', 'sending', 'sent', 'dead']:
+            info = _delivery_info(dict(self.job, status=status), dict(self.ready, simulation=True), self.now)
+            self.assertEqual(info['state'], 'simulation')
+            self.assertIn('不会发送', info['label'])
+
     def test_stopped_preview_sending_and_terminal_failure(self):
         self.assertEqual(_delivery_info(self.job,{},self.now)['state'],'blocked_stopped')
         self.assertEqual(_delivery_info(self.job,dict(self.ready,send_enabled=False),self.now)['state'],'preview_only')

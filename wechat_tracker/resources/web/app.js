@@ -18,6 +18,13 @@ const state = {
   messageOffset: 0,
   messageLimit: 100,
   messageRequest: 0,
+  eventsRequest: 0,
+  outboxRequest: 0,
+  previewRequest: 0,
+  statusRequest: 0,
+  databaseRequest: 0,
+  servicesRequest: 0,
+  logsRequest: 0,
   outbox: [],
   service: {},
   config: {},
@@ -116,6 +123,25 @@ function showToast(message, type = 'info', duration = 3500) {
   }, duration);
 }
 
+const modalOpeners = new Map();
+
+function openModal(id, focusId) {
+  const modal = document.getElementById(id);
+  if (!modal.classList.contains('active')) modalOpeners.set(id, document.activeElement);
+  modal.classList.add('active');
+  modal.tabIndex = -1;
+  const target = focusId ? document.getElementById(focusId) : modal.querySelector('button:not(:disabled)');
+  (target || modal).focus();
+}
+
+function closeModal(modal, restoreFocus = true) {
+  if (!modal.classList.contains('active')) return;
+  modal.classList.remove('active');
+  const opener = modalOpeners.get(modal.id);
+  modalOpeners.delete(modal.id);
+  if (restoreFocus && opener?.isConnected) opener.focus();
+}
+
 function showConfirm(title, message, onConfirm) {
   const modal = document.getElementById('confirmModal');
   document.getElementById('confirmModalTitle').textContent = title;
@@ -125,7 +151,7 @@ function showConfirm(title, message, onConfirm) {
   const cancelBtn = document.getElementById('confirmModalCancelBtn');
 
   const cleanup = () => {
-    modal.classList.remove('active');
+    closeModal(modal);
     okBtn.onclick = null;
     cancelBtn.onclick = null;
   };
@@ -135,7 +161,7 @@ function showConfirm(title, message, onConfirm) {
     onConfirm();
   };
   cancelBtn.onclick = cleanup;
-  modal.classList.add('active');
+  openModal('confirmModal', 'confirmModalCancelBtn');
 }
 
 // API Calls
@@ -174,6 +200,7 @@ async function apiPost(endpoint, body = {}) {
 // Status & Dashboard updater
 async function refreshStatus() {
   if (state.isConsoleStopping || state.isConsoleStopped) return;
+  const request = ++state.statusRequest;
   const statusBadge = document.getElementById('serviceStatusBadge');
   const statusText = document.getElementById('serviceStatusText');
   const dot = statusBadge.querySelector('.status-indicator');
@@ -181,6 +208,7 @@ async function refreshStatus() {
 
   try {
     const data = await apiGet('/api/status');
+    if (request !== state.statusRequest) return;
     if (state.isConsoleStopping || state.isConsoleStopped) return;
     state.isBackendOnline = true;
     if (offlineBanner) offlineBanner.style.display = 'none';
@@ -249,14 +277,32 @@ async function refreshStatus() {
     document.getElementById('cfgSmtpHost').textContent = emailCfg.host || 'smtp.qq.com';
     document.getElementById('cfgSmtpPort').textContent = `${emailCfg.port || 465} (${emailCfg.security || 'SSL'})`;
     document.getElementById('cfgCredentials').textContent = data.email_configured ? '本机已保存邮箱配置（发信时校验）' : '尚未配置邮箱';
+    state.emailStatus = data.email_status || {};
+    const macKeychain = state.emailStatus.backend === 'macos_keychain';
+    document.getElementById('btnAuthorizeEmail').textContent = !data.email_configured ? '首次配置指南' : macKeychain ? '授权邮箱' : '检查邮箱';
+    const sharedEmail = state.emailStatus.settings_shared ? `凭据来自「${state.emailStatus.source_group}」。` : '';
+    const environmentOnly = state.emailStatus.backend === 'environment';
+    document.getElementById('emailSetupHelp').textContent = sharedEmail + (data.email_configured
+      ? macKeychain ? '后台不会主动弹密码；授权失效时点击授权邮箱并在系统弹窗完成授权。此操作不发测试邮件。'
+        : '当前使用本机加密凭据或环境变量；点击检查邮箱验证可读取状态，不发测试邮件。'
+      : environmentOnly ? '当前平台使用环境变量提供 SMTP 凭据。请在启动控制台和监控服务的同一终端设置下列变量，随后重启控制台。'
+        : '首次使用请在终端运行下方命令，按提示隐藏输入 SMTP 授权码。配置命令会实际发送一封测试邮件；完成后刷新此页。');
+    const configArgument = state.emailStatus.backend === 'windows_dpapi'
+      ? `'${(state.emailStatus.setup_config_path || 'config.local.toml').replace(/'/g, "''")}'`
+      : `'${(state.emailStatus.setup_config_path || 'config.local.toml').replace(/'/g, "'\\''")}'`;
+    document.getElementById('emailSetupCommand').textContent = data.email_configured ? ''
+      : environmentOnly ? (state.emailStatus.environment_variables || []).join('、')
+        : `${state.emailStatus.backend === 'windows_dpapi' ? 'PowerShell: ' : ''}wechat-track --config ${configArgument} email setup`;
     document.getElementById('cfgSendState').textContent = !svc.running ? '监控已停止' :
       (svc.send_enabled ? (svc.send_ready ? '真实发信已就绪' : '发信模式：等待本机凭据') : '仅预览模式');
 
     document.getElementById('cfgDataDir').textContent = cfg.data_dir || '--';
     document.getElementById('cfgJournal').textContent = svc.journal_mode || 'DELETE';
     document.getElementById('cfgBackupTime').textContent = svc.backup_at ? formatTime(svc.backup_at) : '尚未备份';
+    updateDbTypeBadge();
 
   } catch (err) {
+    if (request !== state.statusRequest) return;
     if (state.isConsoleStopping || state.isConsoleStopped) return;
     state.isBackendOnline = false;
     console.warn('Failed to refresh status:', err);
@@ -289,6 +335,10 @@ function updateDbTypeBadge() {
   if (!badge) return;
 
   const currentDb = state.databases.find(d => d.path === state.selectedDb);
+  const scope = document.getElementById('serviceOperationScope');
+  if (scope) scope.textContent = `当前查看：${currentDb?.label || '活动库'}。监控启停、处理设置、邮箱及到期任务预览均作用于管理群「${state.config.group || '当前群'}」。`;
+  const returnButton = document.getElementById('btnReturnActive');
+  if (returnButton) returnButton.hidden = !currentDb || currentDb.is_active;
   if (!currentDb) {
     badge.className = 'badge badge-success';
     badge.textContent = '当前活动库';
@@ -311,20 +361,54 @@ function updateDbTypeBadge() {
 }
 
 // Fetch database list
+function selectDatabase(path) {
+  if (state.selectedDb !== path) {
+    state.eventsRequest++;
+    state.outboxRequest++;
+    state.messageRequest++;
+    state.previewRequest++;
+    state.events = [];
+    state.outbox = [];
+    state.messages = [];
+    state.messageOffset = 0;
+    state.currentModalEvent = null;
+    for (const id of ['emailPreviewModal', 'eventDetailModal']) closeModal(document.getElementById(id), false);
+    for (const id of ['kpiEventsCount', 'tabBadgeEvents', 'countFilterAll', 'kpiOutboxCount', 'tabBadgeOutbox']) {
+      document.getElementById(id).textContent = '--';
+    }
+    document.getElementById('mailDeliveryStatus').textContent = '正在读取所选数据源…';
+    document.getElementById('kpiOutboxDetail').textContent = '正在读取所选数据源…';
+    document.getElementById('eventsListContainer').textContent = '正在读取所选数据源…';
+    document.getElementById('outboxTableBody').textContent = '';
+    state._lastEventsRenderKey = null;
+    state._lastOutboxRenderKey = null;
+  }
+  state.selectedDb = path;
+  localStorage.setItem('selectedDatabase', path);
+  const select = document.getElementById('databaseSelect');
+  if (select) select.value = path;
+  updateDbTypeBadge();
+}
+
 async function loadDatabases() {
   if (state.isConsoleStopping || state.isConsoleStopped) return;
+  const request = ++state.databaseRequest;
   try {
     const data = await apiGet('/api/databases');
-    if (state.isConsoleStopping || state.isConsoleStopped) return;
+    if (request !== state.databaseRequest || state.isConsoleStopping || state.isConsoleStopped) return;
     state.databases = data.databases || [];
     const select = document.getElementById('databaseSelect');
     select.innerHTML = '';
 
     const activeDb = state.databases.find(d => d.is_active);
+    const activePath = activeDb?.path || '';
+    const previousActive = localStorage.getItem('selectedDatabaseActive');
+    if (previousActive !== activePath) selectDatabase(activePath);
+    localStorage.setItem('selectedDatabaseActive', activePath);
 
     // If state.selectedDb is empty or no longer in databases, default to active database
     if (!state.selectedDb || !state.databases.some(d => d.path === state.selectedDb)) {
-      state.selectedDb = activeDb ? activeDb.path : (state.databases[0] ? state.databases[0].path : '');
+      selectDatabase(activePath || state.databases[0]?.path || '');
     }
 
     state.databases.forEach((db) => {
@@ -341,18 +425,14 @@ async function loadDatabases() {
 
     select.onchange = (e) => {
       if (state.isConsoleStopped || state.isConsoleStopping) return;
-      state.selectedDb = e.target.value;
-      localStorage.setItem('selectedDatabase', state.selectedDb);
-      state._lastEventsRenderKey = null;
-      state._lastOutboxRenderKey = null;
-      updateDbTypeBadge();
+      selectDatabase(e.target.value);
       loadEvents();
       state.messageOffset = 0;
       loadMessages();
       loadOutbox();
     };
   } catch (err) {
-    if (state.isConsoleStopping || state.isConsoleStopped) return;
+    if (request !== state.databaseRequest || state.isConsoleStopping || state.isConsoleStopped) return;
     console.error('Failed to load databases:', err);
     reportDataError('数据源', err);
   }
@@ -361,10 +441,12 @@ async function loadDatabases() {
 // Load Events
 async function loadEvents() {
   if (state.isConsoleStopping || state.isConsoleStopped) return;
+  const request = ++state.eventsRequest;
+  const db = state.selectedDb;
   try {
-    const url = state.selectedDb ? `/api/events?db=${encodeURIComponent(state.selectedDb)}` : '/api/events';
+    const url = db ? `/api/events?db=${encodeURIComponent(db)}` : '/api/events';
     const data = await apiGet(url);
-    if (state.isConsoleStopping || state.isConsoleStopped) return;
+    if (request !== state.eventsRequest || db !== state.selectedDb || state.isConsoleStopping || state.isConsoleStopped) return;
     state.events = data.events || [];
     const selectedDatabase = state.databases.find(db => db.path === state.selectedDb);
     if (selectedDatabase) {
@@ -382,7 +464,9 @@ async function loadEvents() {
 
     renderEvents();
   } catch (err) {
-    if (state.isConsoleStopping || state.isConsoleStopped) return;
+    if (request !== state.eventsRequest || db !== state.selectedDb || state.isConsoleStopping || state.isConsoleStopped) return;
+    document.getElementById('kpiEventsDetail').textContent = '读取失败；请刷新重试。当前内容仅为所选数据源上次成功读取的记录。';
+    if (!state.events.length) document.getElementById('eventsListContainer').textContent = '所选数据源读取失败，请刷新重试。';
     console.error('Failed to load events:', err);
     reportDataError('讲座数据', err);
   }
@@ -615,21 +699,23 @@ function deliveryHtml(delivery) {
 // Load Outbox
 async function loadOutbox() {
   if (state.isConsoleStopping || state.isConsoleStopped) return;
+  const request = ++state.outboxRequest;
+  const db = state.selectedDb;
   try {
-    const url = state.selectedDb ? `/api/outbox?db=${encodeURIComponent(state.selectedDb)}` : '/api/outbox';
+    const url = db ? `/api/outbox?db=${encodeURIComponent(db)}` : '/api/outbox';
     const data = await apiGet(url);
-    if (state.isConsoleStopping || state.isConsoleStopped) return;
+    if (request !== state.outboxRequest || db !== state.selectedDb || state.isConsoleStopping || state.isConsoleStopped) return;
     state.outbox = data.jobs || [];
     state.deliveryLoaded = true;
     const states = state.outbox.map(job => job.delivery?.state);
     const sent = states.filter(s => s === 'sent').length;
-    const waiting = states.filter(s => !['sent','superseded','expired','coalesced'].includes(s)).length;
+    const waiting = states.filter(s => !['sent','superseded','expired','coalesced','simulation'].includes(s)).length;
     document.getElementById('kpiOutboxDetail').textContent = `所选数据源：已提交 ${sent} · 未发送 ${waiting}`;
     const problem = state.outbox.find(job => ['blocked_credentials','failed','blocked_stopped','retry_wait','queued_late','preview_only'].includes(job.delivery?.state));
     const service = data.delivery_service || {};
     const banner = document.getElementById('mailDeliveryStatus');
     banner.classList.toggle('delivery-attention', Boolean(problem));
-    banner.textContent = problem ? `${service.group || '所选群'}：${problem.delivery.label}。${problem.delivery.message}${problem.delivery.retry_at ? ' 下次重试：' + formatTime(problem.delivery.retry_at) : ''}`
+    banner.textContent = service.simulation ? 'Demo 演示数据：仅供预览，所有演示任务均不会真实发送。' : problem ? `${service.group || '所选群'}：${problem.delivery.label}。${problem.delivery.message}${problem.delivery.retry_at ? ' 下次重试：' + formatTime(problem.delivery.retry_at) : ''}`
       : `${service.group || '所选数据源'}：${sent} 封已提交邮件服务器，${waiting} 封等待处理。`;
 
     document.getElementById('kpiOutboxCount').textContent = state.outbox.length;
@@ -637,7 +723,8 @@ async function loadOutbox() {
 
     renderOutbox();
   } catch (err) {
-    if (state.isConsoleStopping || state.isConsoleStopped) return;
+    if (request !== state.outboxRequest || db !== state.selectedDb || state.isConsoleStopping || state.isConsoleStopped) return;
+    document.getElementById('mailDeliveryStatus').textContent = '通知队列读取失败，请刷新重试；当前内容仅为所选数据源上次成功读取的记录。';
     console.error('Failed to load outbox:', err);
     reportDataError('通知队列', err);
   }
@@ -715,16 +802,17 @@ function renderOutbox() {
 // Load Services (Multi-instance detection)
 async function loadServices() {
   if (state.isConsoleStopping || state.isConsoleStopped) return;
+  const request = ++state.servicesRequest;
   const tbody = document.getElementById('servicesTableBody');
   if (!tbody) return;
 
   try {
     const data = await apiGet('/api/services');
-    if (state.isConsoleStopping || state.isConsoleStopped) return;
+    if (request !== state.servicesRequest || state.isConsoleStopping || state.isConsoleStopped) return;
     state.services = data.services || [];
     const followers = state.services.filter(svc => svc.running && svc.processing_settings_shared).map(svc => svc.group);
     const scope = document.getElementById('processingScope');
-    if (scope) scope.textContent = `设置持续用于当前管理群【${state.config.group || '当前群'}】${followers.length ? '以及跟随此配置的服务【' + followers.join('、') + '】' : ''}。切换数据源仅查看对应群记录，不会更换监控群。`;
+    if (scope && !state.processing?.settings_shared) scope.textContent = `设置持续用于当前管理群【${state.config.group || '当前群'}】${followers.length ? '以及跟随此配置的服务【' + followers.join('、') + '】' : ''}。切换数据源仅查看对应群记录，不会更换监控群。`;
 
 
     const servicesKey = state.services.map(s => `${s.data_dir}:${s.instance}:${s.running}:${s.status}:${s.send_enabled}:${s.reset_supported}:${s.reset_at}:${s.processing_mode}:${s.processing_settings_shared}:${s.processing_last_at}:${s.processing_last_error}`).join(';');
@@ -833,7 +921,7 @@ async function loadServices() {
       tbody.appendChild(tr);
     });
   } catch (err) {
-    if (state.isConsoleStopping || state.isConsoleStopped) return;
+    if (request !== state.servicesRequest || state.isConsoleStopping || state.isConsoleStopped) return;
     console.warn('Failed to load services:', err);
     tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--red); padding: 16px;">获取服务列表失败: ${escapeHtml(err.message)}</td></tr>`;
   }
@@ -842,9 +930,11 @@ async function loadServices() {
 // Load Logs
 async function loadLogs() {
   if (state.isConsoleStopping || state.isConsoleStopped) return;
+  const request = ++state.logsRequest;
+  const managedDir = state.config.data_dir;
   try {
     const data = await apiGet('/api/logs?lines=200');
-    if (state.isConsoleStopping || state.isConsoleStopped) return;
+    if (request !== state.logsRequest || managedDir !== state.config.data_dir || state.isConsoleStopping || state.isConsoleStopped) return;
     const container = document.getElementById('terminalBody');
     const lines = data.lines || [];
 
@@ -871,7 +961,7 @@ async function loadLogs() {
       container.scrollTop = container.scrollHeight;
     }
   } catch (err) {
-    if (state.isConsoleStopping || state.isConsoleStopped) return;
+    if (request !== state.logsRequest || managedDir !== state.config.data_dir || state.isConsoleStopping || state.isConsoleStopped) return;
     console.error('Failed to load logs:', err);
     reportDataError('运行日志', err);
   }
@@ -888,7 +978,7 @@ function openEventDetail(event) {
   document.getElementById('modalEventSummary').textContent = event.summary || '无摘要';
   document.getElementById('modalEventSourceText').textContent = event.source_text || '无原始正文';
 
-  document.getElementById('eventDetailModal').classList.add('active');
+  openModal('eventDetailModal');
 }
 
 async function openEmailPreview(eventId, jobId) {
@@ -896,6 +986,8 @@ async function openEmailPreview(eventId, jobId) {
     showToast('控制台正在关闭或已关闭，无法拉取邮件预览', 'info');
     return;
   }
+  const db = state.selectedDb;
+  const request = ++state.previewRequest;
   try {
     let url = '/api/preview_email?';
     if (jobId) url += `job_id=${encodeURIComponent(jobId)}`;
@@ -904,6 +996,7 @@ async function openEmailPreview(eventId, jobId) {
     if (state.selectedDb) url += `&db=${encodeURIComponent(state.selectedDb)}`;
 
     const data = await apiGet(url);
+    if (request !== state.previewRequest || db !== state.selectedDb || state.isConsoleStopped || state.isConsoleStopping) return;
     document.getElementById('emailPreviewSubject').textContent = data.subject || '--';
     document.getElementById('emailPreviewFormat').textContent = {
       llm_summary: 'LLM 提取信息 + 完整原文', source: '原文通知', legacy: '历史通知格式',
@@ -921,10 +1014,14 @@ async function openEmailPreview(eventId, jobId) {
     } else {
       previewBody.textContent = data.body || '--';
     }
-    document.getElementById('emailPreviewFrom').textContent = (state.config.email && state.config.email.from) || '讲座通知机器人 (QQ SMTP)';
+    const selectedSource = state.databases.find(item => item.path === db);
+    document.getElementById('emailPreviewFrom').textContent = selectedSource?.is_active
+      ? (state.config.email?.from && state.config.email.from !== '未配置' ? state.config.email.from : '发信时按本机邮箱配置确定')
+      : '只读内容预览；所属服务发信时确定发件人';
 
-    document.getElementById('emailPreviewModal').classList.add('active');
+    openModal('emailPreviewModal');
   } catch (err) {
+    if (request !== state.previewRequest || db !== state.selectedDb || state.isConsoleStopped || state.isConsoleStopping) return;
     showToast(`无法获取邮件预览: ${err.message}`, 'error');
   }
 }
@@ -976,7 +1073,19 @@ function setServiceButtonsDisabled(disabled) {
   });
 }
 
-async function controlService(action, send = false) {
+async function confirmSendService(action) {
+  if (state.isConsoleStopped || state.isConsoleStopping) return;
+  try {
+    const backlog = await apiGet('/api/service/backlog');
+    if (state.isConsoleStopped || state.isConsoleStopping) return;
+    const details = `操作对象：管理群「${backlog.group}」。\n当前有 ${backlog.pending} 条待发送记录，其中 ${backlog.due} 条已到期、${backlog.retrying} 条有失败重试记录。最早计划时间：${formatTime(backlog.oldest_due_at) || '无'}。另有 ${backlog.failed} 条停止重试的失败记录，不会自动重发。\n\n开启后会真实连接 SMTP，投递符合当前规则的已有积压和后续新通知；过往通知也可能立即发送。这里显示的是当前快照，确认前仍可能新增任务。确定继续吗？`;
+    showConfirm('确认管理群与已有积压', details, () => controlService(action, true, backlog.group));
+  } catch (error) {
+    showToast(`无法核对管理群待发送记录，未开启发信：${error.message}`, 'error');
+  }
+}
+
+async function controlService(action, send = false, expectedGroup) {
   if (state.isConsoleStopped || state.isConsoleStopping) {
     showToast('控制台正在关闭或已关闭，无法执行监控操作', 'warning');
     return;
@@ -991,7 +1100,7 @@ async function controlService(action, send = false) {
   showToast(`正在${actionLabel}...`, 'info');
 
   try {
-    await apiPost(endpoint);
+    await apiPost(endpoint, expectedGroup ? { expected_group: expectedGroup, send } : {});
     await refreshStatus();
     await loadServices();
     if (!state.isBackendOnline) throw new Error('无法确认操作后的后台状态，请恢复连接后检查');
@@ -1188,6 +1297,13 @@ function startRefreshTimer() {
 
 function renderProcessing(cfg, refill = false) {
   state.processing = cfg;
+  document.getElementById('llmTestHint').textContent = cfg.settings_shared
+    ? '使用当前共享配置，仅发送下方输入的原文；不保存设置、不入库、不发信。缺少发送时间时不猜测相对日期。'
+    : '仅发送下方输入的原文，可使用尚未保存的配置；不入库、不发信。缺少发送时间时不猜测相对日期。';
+  document.getElementById('processingScope').textContent = cfg.settings_shared
+    ? `当前使用共享处理配置（只读）：${cfg.settings_source}。请在此配置的控制台修改，修改将影响所有引用它的服务；下方可测试当前共享配置。`
+    : '配置持续保存，适用于当前配置后续所有新消息。切换数据源仅查看记录，不改变处理配置。';
+  processingBusy(Boolean(state.processingSaving));
   const mode = cfg.processing_mode || 'rules';
   const mailFormat = mode === 'llm' ? 'LLM 提取信息 + 完整原文（失败时回退原文）' : '原文通知；文件仅标注名称';
   document.getElementById('processingMailFormat').textContent = `当前新通知邮件格式：${mailFormat}。随处理方式一起切换，已入队通知保留生成时的格式。`;
@@ -1225,12 +1341,17 @@ function processingPayload(mode) {
 }
 
 function processingBusy(busy) {
-  for (const id of ['btnProcessingRules', 'btnProcessingLlm', 'btnSaveProcessing', 'btnTestProcessing']) {
-    document.getElementById(id).disabled = busy;
+  state.processingSaving = busy;
+  const shared = Boolean(state.processing?.settings_shared);
+  for (const id of ['btnProcessingRules', 'btnProcessingLlm', 'btnSaveProcessing']) {
+    document.getElementById(id).disabled = busy || shared;
   }
+  for (const input of document.querySelectorAll('#processingForm input')) input.disabled = busy || shared;
+  document.getElementById('btnTestProcessing').disabled = busy;
 }
 
 async function saveProcessing(mode) {
+  if (state.processingSaving || state.processing?.settings_shared) return;
   processingBusy(true);
   const feedback = document.getElementById('processingFeedback');
   feedback.textContent = '正在保存…';
@@ -1238,13 +1359,17 @@ async function saveProcessing(mode) {
     // Switching back to rules stays possible even while the draft form is invalid.
     const payload = mode === 'rules' ? { processing_mode: 'rules' } : processingPayload(mode);
     const result = await apiPost('/api/processing', payload);
+    // Discard status snapshots requested before this save completed.
+    state.statusRequest++;
     if (mode !== 'rules') state.processingDirty = false;
     renderProcessing(result.processing, mode !== 'rules');
     if (mode !== 'rules') {
       document.getElementById('llmApiKey').value = '';
       document.getElementById('llmClearKey').checked = false;
     }
-    feedback.textContent = '已持久保存，将持续用于后续所有新消息；无需重复填写密钥。历史记录不补发。';
+    feedback.textContent = mode === 'rules' && state.processingDirty
+      ? '已切回本地规则，用于后续新消息。表单中其他修改尚未保存，已为你保留；历史记录不补发。'
+      : '已持久保存，将持续用于后续所有新消息；无需重复填写密钥。历史记录不补发。';
     showToast('处理配置与对应邮件格式已保存', 'success');
   } catch (error) {
     feedback.textContent = error.message;
@@ -1255,6 +1380,7 @@ async function saveProcessing(mode) {
 }
 
 async function testProcessing() {
+  if (state.processingSaving) return;
   processingBusy(true);
   const output = document.getElementById('llmTestResult');
   output.textContent = '正在请求 LLM…';
@@ -1276,8 +1402,18 @@ async function testProcessing() {
 
 // Event Listeners Setup
 function setupEventListeners() {
+  document.getElementById('btnReturnActive').onclick = () => {
+    const active = state.databases.find(db => db.is_active);
+    if (active) {
+      selectDatabase(active.path);
+      loadEvents(); loadMessages(); loadOutbox();
+    }
+  };
   for (const eventName of ['input', 'change']) {
-    document.getElementById('processingForm').addEventListener(eventName, () => { state.processingDirty = true; });
+    document.getElementById('processingForm').addEventListener(eventName, () => {
+      state.processingDirty = true;
+      document.getElementById('processingFeedback').textContent = '有未保存的修改；点击保存配置后用于后续新消息。';
+    });
   }
   document.getElementById('processingForm').addEventListener('submit', (event) => {
     event.preventDefault(); saveProcessing();
@@ -1442,7 +1578,7 @@ function setupEventListeners() {
               showToast(`已成功切换至群【${targetGroup}】`, 'success');
 
               // 切群成功后把 state.selectedDb 清空，再 await loadDatabases 并选中返回的当前活动库，禁止继续显示旧群库
-              state.selectedDb = '';
+              selectDatabase('');
               state._lastEventsRenderKey = null;
               state._lastOutboxRenderKey = null;
               state._lastServicesRenderKey = null;
@@ -1482,31 +1618,34 @@ function setupEventListeners() {
   const btnAuthorizeEmail = document.getElementById('btnAuthorizeEmail');
   if (btnAuthorizeEmail) {
     btnAuthorizeEmail.onclick = async () => {
+      if (!state.emailStatus?.configured) {
+        showToast('邮箱尚未配置，请按下方邮箱设置中的说明完成首次配置', 'info', 6000);
+        document.getElementById('emailSetupHelp').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
       btnAuthorizeEmail.disabled = true;
-      showToast('请在系统钥匙串弹窗中完成授权并选择“始终允许”', 'info');
+      const macKeychain = state.emailStatus?.backend === 'macos_keychain';
+      showToast(macKeychain ? '请在系统钥匙串弹窗中完成授权并选择“始终允许”' : '正在检查本机邮箱凭据…', 'info');
       try {
-        await apiPost('/api/email/authorize', {});
-        showToast('邮箱授权完成，后台会自动重新加载；未发送测试邮件', 'success');
+        const result = await apiPost('/api/email/authorize', {});
+        if (!result.configured) throw new Error('尚未配置邮箱，请按下方终端命令完成首次设置');
+        showToast(macKeychain ? '邮箱授权完成，后台会自动重新加载；未发送测试邮件' : '本机邮箱凭据检查通过；未发送测试邮件', 'success');
         await refreshStatus();
       } catch (err) {
-        showToast(`邮箱授权未完成：${err.message}`, 'error');
+        showToast(`${macKeychain ? '邮箱授权未完成' : '邮箱检查未通过'}：${err.message}`, 'error');
       } finally {
         btnAuthorizeEmail.disabled = false;
       }
     };
   }
   document.getElementById('btnStartService').onclick = () => controlService('start', false);
-  document.getElementById('btnStartSendService').onclick = () => {
-    showConfirm('开启真实发信', '确定要以正式发信模式启动监控吗？捕获到讲座时将真实连接 QQ SMTP 发送邮件。', () => {
-      controlService('start', true);
-    });
-  };
+  document.getElementById('btnStartSendService').onclick = () => confirmSendService('start');
   document.getElementById('btnStopService').onclick = () => {
     showConfirm('停止微信监控', '确定要停止微信讲座监控服务吗？监控停止后将暂停捕获新消息，网页控制台仍可继续查看历史数据。', () => {
       controlService('stop');
     });
   };
-  document.getElementById('btnRestartService').onclick = () => controlService('restart');
+  document.getElementById('btnRestartService').onclick = () => state.service.send_enabled ? confirmSendService('restart') : controlService('restart');
 
   // Close Web Console (Stop UI backend server while keeping WeChat monitoring untouched)
   const btnCloseConsole = document.getElementById('btnCloseConsole');
@@ -1529,10 +1668,10 @@ function setupEventListeners() {
     }
     const btn = document.getElementById('btnTick');
     btn.disabled = true;
-    showToast('正在触发即时调度评估...', 'info');
+    showToast(`正在预览管理群「${state.config.group || '当前群'}」的到期任务…`, 'info');
     try {
       const res = await apiPost('/api/tick');
-      showToast(`调度完成，处理任务数: ${res.dispatched || 0}`, 'success');
+      showToast(`到期任务预览完成：${res.dispatched || 0} 条；本次操作未发信`, 'success');
       await loadOutbox();
     } catch (err) {
       showToast(`调度失败: ${err.message}`, 'error');
@@ -1579,11 +1718,11 @@ function setupEventListeners() {
       const res = await apiPost('/api/demo/run');
       showToast('Demo 回放完成，生成了隔离演示数据', 'success');
       if (res && res.db) {
-        state.selectedDb = res.db;
+        selectDatabase(res.db);
       }
       await loadDatabases();
       if (res && res.db) {
-        state.selectedDb = res.db;
+        selectDatabase(res.db);
         const select = document.getElementById('databaseSelect');
         if (select) select.value = res.db;
         updateDbTypeBadge();
@@ -1592,6 +1731,7 @@ function setupEventListeners() {
       state.messageOffset = 0;
       await loadMessages();
       await loadOutbox();
+      document.querySelector('[data-tab="tab-events"]').click();
     } catch (err) {
       showToast(`Demo 运行失败: ${err.message}`, 'error');
     } finally {
@@ -1658,19 +1798,33 @@ function setupEventListeners() {
   // Modal Closers
   document.querySelectorAll('.close-modal-btn').forEach((btn) => {
     btn.onclick = () => {
-      document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('active'));
+      closeModal(btn.closest('.modal-overlay'));
     };
   });
 
   document.querySelectorAll('.modal-overlay').forEach((modal) => {
     modal.onclick = (e) => {
-      if (e.target === modal) modal.classList.remove('active');
+      if (e.target === modal) closeModal(modal);
     };
   });
 
   document.addEventListener('keydown', (e) => {
+    const activeModals = Array.from(document.querySelectorAll('.modal-overlay.active'));
+    const modal = activeModals[activeModals.length - 1];
+    if (!modal) return;
     if (e.key === 'Escape') {
-      document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('active'));
+      e.preventDefault();
+      closeModal(modal);
+    } else if (e.key === 'Tab') {
+      const focusable = Array.from(modal.querySelectorAll('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), iframe, [tabindex="0"]'))
+        .filter(element => element.getClientRects().length);
+      const first = focusable[0] || modal;
+      const last = focusable[focusable.length - 1] || modal;
+      if (e.shiftKey && (document.activeElement === first || !modal.contains(document.activeElement))) {
+        e.preventDefault(); last.focus();
+      } else if (!e.shiftKey && (document.activeElement === last || !modal.contains(document.activeElement))) {
+        e.preventDefault(); first.focus();
+      }
     }
   });
 

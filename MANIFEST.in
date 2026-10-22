@@ -2,9 +2,11 @@ include README.md CHANGELOG.md pyproject.toml
 include config.example.toml
 recursive-include wechat_tracker *.py *.ps1 *.swift *.jsonl *.html *.css *.js *.toml
 recursive-include tests *.py
+recursive-include tests/frontend *.cjs
 recursive-include mac *.py *.command *.toml
 recursive-include scripts *.py *.ps1 *.cmd
-include docs/architecture.md docs/deployment.md docs/macos.md docs/email.md
+include docs/architecture.md docs/deployment.md docs/macos.md docs/email.md docs/console-usage.md
+include docs/github-reuse.md
 include docs/llm-processing.md docs/automatic-forward.md docs/macos-forward-background.md
 include docs/capture.md docs/service.md docs/database-recovery.md
 prune state

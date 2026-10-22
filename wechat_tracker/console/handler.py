@@ -18,12 +18,13 @@ from ..notify import format_notification, format_notification_html, notification
 from ..service import read_status, reset_test_data, start_service, stop_service
 from ..store import Store
 from ..processing import extract_llm, prepare_settings, public_settings, save_settings
+from ..extraction.settings import effective_processing_config
 
 from ..paths import PROJECT_ROOT, RESOURCE_ROOT
 from .discovery import _list_services
 from .presentation import _delivery_info, _sanitize_service
 from .queries import (_captured_messages, _list_databases, calendar_events,
-                      read_events, read_jobs, read_preview_target)
+                      delivery_backlog, read_events, read_jobs, read_preview_target)
 
 WEB_RESOURCES_DIR = RESOURCE_ROOT / "web"
 _OPERATION_LOCK = threading.Lock()
@@ -145,8 +146,10 @@ class WebControlHandler(BaseHTTPRequestHandler):
         return target
 
     def _delivery_service(self, db_path):
+        if db_path.name == "demo.sqlite3":
+            return {"simulation": True, "group": "Demo 演示"}
         return next((svc for svc in _list_services(self.config, self.config_path)
-                     if Path(svc.get("data_dir", "")).resolve() == db_path.parent.resolve()), {})
+                     if (Path(svc.get("data_dir", "")) / "tracker.sqlite3").resolve() == db_path.resolve()), {})
 
     def do_OPTIONS(self):
         if not self._check_origin():
@@ -206,13 +209,8 @@ class WebControlHandler(BaseHTTPRequestHandler):
                 status = _sanitize_service(read_status(self.config))
                 # Status reads must not load Keychain secrets into this web
                 # process or carry credentials from a previously selected group.
-                email = self.config.get("email", {})
-                fields = ("smtp_user_env", "smtp_password_env", "from_env", "to_env")
-                email_configured = (
-                    all(email.get(key) and os.environ.get(email[key]) for key in fields)
-                    or any((Path(self.config["data_dir"]) / name).is_file()
-                           for name in ("email.keychain", "email.credentials"))
-                )
+                from ..credentials import credential_status
+                email_status = credential_status(self.config)
 
                 safe_cfg = {
                     "group": self.config.get("group"),
@@ -234,7 +232,8 @@ class WebControlHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "service": status,
                     "config": safe_cfg,
-                    "email_configured": email_configured,
+                    "email_configured": email_status["configured"],
+                    "email_status": email_status,
                 })
 
             if path == "/api/databases":
@@ -245,6 +244,11 @@ class WebControlHandler(BaseHTTPRequestHandler):
             if path == "/api/services":
                 services = _list_services(self.config, self.config_path)
                 return self._send_json({"ok": True, "services": services})
+
+            if path == "/api/service/backlog":
+                db_path = Path(self.config["data_dir"]).resolve() / "tracker.sqlite3"
+                return self._send_json(dict(ok=True, group=self.config.get("group", ""), db=str(db_path),
+                                            **delivery_backlog(db_path, datetime.now(timezone.utc).isoformat())))
 
             if path == "/api/events":
                 db_path = self._resolve_db_path(query)
@@ -376,7 +380,7 @@ class WebControlHandler(BaseHTTPRequestHandler):
                                            "effective": "next_message"})
 
             if path == "/api/processing/test":
-                config = prepare_settings(load_config(self.config_path), body)
+                config = prepare_settings(effective_processing_config(load_config(self.config_path)), body)
                 text = body.get("text", "")
                 if not isinstance(text, str) or not text.strip() or len(text) > 10000:
                     raise ValueError("请输入 1–10000 字的测试原文")
@@ -408,6 +412,8 @@ class WebControlHandler(BaseHTTPRequestHandler):
 
             if path in {"/api/service/start", "/api/service/start_send", "/api/service/restart"}:
                 with _OPERATION_LOCK:
+                    if "expected_group" in body and body["expected_group"] != self.config.get("group"):
+                        raise ValueError("管理群已变更，请重新核对当前群及待发送记录")
                     current = read_status(self.config)
                     send_mode = path.endswith("start_send")
                     if path.endswith("restart"):

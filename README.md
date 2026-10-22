@@ -2,7 +2,7 @@
 
 本地采集指定微信群的可读消息，识别讲座与学术报告，保留原文，并生成邮件通知与日历文件。提供命令行和浏览器控制台，支持 macOS Accessibility、Windows UIAutomation 和离线 JSONL 输入。
 
-**正式版本：1.0.0 · Python 3.11+ · 核心运行时无第三方 Python 依赖。** 安装包见 [GitHub Releases](https://github.com/Fui2311/wechat_tracking/releases)。
+**正式版本：1.0.1 · Python 3.11+ · 核心运行时无第三方 Python 依赖。** 安装包见 [GitHub Releases](https://github.com/Fui2311/wechat_tracking/releases)。
 
 默认使用本地规则、仅预览邮件；启用 LLM 后才向所配置的兼容接口发送待分析正文，显式启用发信后才投递 SMTP。不会向微信群发送消息或代替用户报名。
 
@@ -40,7 +40,7 @@ Windows PowerShell 用 `python` 创建环境，激活命令为 `.\.venv\Scripts\
 
 ### macOS 实时部署
 
-推荐下载 Release 中的 `WeChatLectureTracker-macOS-1.0.0.zip`，解压后执行：
+推荐下载 Release 中的 `WeChatLectureTracker-macOS-1.0.1.zip`，解压后执行：
 
 ```bash
 python3 mac/verify-package.py .
@@ -115,7 +115,7 @@ wechat-track --config config.local.toml email setup
 wechat-track --config config.local.toml service install --send
 ```
 
-LLM 设置可在控制台修改并于下一条新消息生效；默认规则模式不调用网络。控制台的模型测试只处理输入框里的文字，不入库、不入队、不发信，但会调用所选模型接口。详见 [邮箱配置](docs/email.md) 和 [模型处理](docs/llm-processing.md)。
+控制台会区分“查看的数据源”和“操作的管理群”。开启发信前展示当前管理群的已有积压，历史待发通知可能立即投递；Demo 始终只预览。LLM 设置可在控制台修改并于下一条新消息生效；默认规则模式不调用网络。控制台的模型测试只处理输入框里的文字，不入库、不入队、不发信，但会调用所选模型接口。详见 [邮箱配置](docs/email.md)、[模型处理](docs/llm-processing.md) 和 [控制台使用流程](docs/console-usage.md)。
 
 ## 项目模块与结构
 
@@ -160,11 +160,12 @@ docs/                     # 架构、部署、平台说明及历史验收记录
 python -m pip install -e '.[dev]'
 python -m ruff check wechat_tracker tests mac scripts
 python -m unittest discover -s tests -v
+node --test tests/frontend/*.test.cjs  # 开发测试需要 Node.js 22+；运行产品不需要
 python -m build
 python scripts/check-release.py
 python scripts/build-mac-package.py
 ```
 
-`check-release.py` 在仓库外创建干净虚拟环境，从 wheel 安装后核对资源、配置初始化、样例去重、邮件预览、ICS 和 HTTP API，禁止调用微信、LLM 或 SMTP。CI 在 Linux、macOS、Windows 运行回归；另检查源码分发包可重新构建及 Mac 安装 ZIP 的清单。桌面窗口、权限、转发和 SMTP 实际送达需要在目标机器单独验收，CI 成功不代表这些物理条件已经满足。
+`check-release.py` 在仓库外创建干净虚拟环境，从 wheel 安装后核对资源、配置初始化、样例去重、邮件预览、ICS 和 HTTP API，禁止调用微信、LLM 或 SMTP。CI 在 Linux、macOS、Windows 运行 Python 回归，并单独运行异步前端状态回归；另检查源码分发包可重新构建及 Mac 安装 ZIP 的清单。桌面窗口、权限、转发和 SMTP 实际送达需要在目标机器单独验收，CI 成功不代表这些物理条件已经满足。
 
 版本变更见 [CHANGELOG.md](CHANGELOG.md)。`state/`、本机配置、`.env`、授权码、模型密钥、聊天数据库和构建产物均不应进入 Git；发布脚本仅打包明确允许的源码与资源。旧版升级及数据库恢复步骤见 [部署指南](docs/deployment.md)。历史交接和实测文档保留原日期，其运行快照不代表当前服务状态。

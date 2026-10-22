@@ -966,7 +966,7 @@ do {
         #else
         let architecture = "x86_64"
         #endif
-        emit(["ok": true, "version": "1.0.0", "architecture": architecture, "desktop_locked": desktopLocked(),
+        emit(["ok": true, "version": "1.0.1", "architecture": architecture, "desktop_locked": desktopLocked(),
               "os": ProcessInfo.processInfo.operatingSystemVersionString])
     } else if action == "self-test-ui-lock" {
         guard let first = UIActionLease() else { try fail("ui_lock_busy") }

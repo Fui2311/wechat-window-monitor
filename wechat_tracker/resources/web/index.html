@@ -27,7 +27,7 @@
               <span id="serviceStatusText">检查中...</span>
             </span>
           </h1>
-          <span class="brand-sub">微信群讲座消息捕获与邮箱通知 · 1.0.0</span>
+          <span class="brand-sub">微信群讲座消息捕获与邮箱通知 · 1.0.1</span>
           <span style="font-size: 11px; color: var(--text-tertiary); margin-left: 8px;">仅采集已加载的可读消息，不代表完整历史</span>
         </div>
       </div>
@@ -102,7 +102,7 @@
         </div>
       </div>
       <div class="banner-right">
-        <span>重新打开：运行快捷启动 <code>wxconsole</code>（或 <code>mac/web.command</code>），再刷新本页。</span>
+        <span>重新打开：按 README 的方法，用原配置和端口重新启动控制台，并打开启动信息中的地址。</span>
       </div>
     </div>
 
@@ -238,7 +238,7 @@
             <polyline points="23 4 23 10 17 10"></polyline>
             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
           </svg>
-          触发即时调度 (Tick)
+          预览到期任务
         </button>
         <button id="btnExportIcs" class="btn btn-secondary">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -257,7 +257,9 @@
         <option value="">加载中...</option>
       </select>
       <span id="dbTypeBadge" class="badge badge-success">当前群活动库</span>
+      <button id="btnReturnActive" class="btn btn-secondary btn-sm" hidden>返回当前群</button>
     </div>
+    <p id="serviceOperationScope" class="text-muted" style="margin:8px 0 16px;" role="status">正在读取查看范围和监控管理群…</p>
 
     <!-- Navigation Tabs -->
     <nav class="tabs-nav">
@@ -480,7 +482,7 @@
           </form>
           <details class="processing-test">
             <summary>测试 LLM 内容提取</summary>
-            <label for="llmTestText" class="processing-help">仅发送下方输入的原文，可使用尚未保存的配置；不入库、不发信。缺少发送时间时不猜测相对日期。</label>
+            <label for="llmTestText" id="llmTestHint" class="processing-help">仅发送下方输入的原文，可使用尚未保存的配置；不入库、不发信。缺少发送时间时不猜测相对日期。</label>
             <textarea id="llmTestText" class="text-input" rows="5" maxlength="10000" placeholder="粘贴一条讲座通知，查看提取结果"></textarea>
             <button id="btnTestProcessing" type="button" class="btn btn-secondary">测试提取</button>
             <pre id="llmTestResult" role="status" aria-live="polite">尚未测试</pre>
@@ -512,8 +514,9 @@
               <div class="config-item"><span class="config-key">SMTP 服务器</span><span id="cfgSmtpHost" class="config-val">smtp.qq.com</span></div>
               <div class="config-item"><span class="config-key">端口与协议</span><span id="cfgSmtpPort" class="config-val">465 (SSL 加密)</span></div>
               <div class="config-item"><span class="config-key">凭据存储</span><span id="cfgCredentials" class="config-val">Keychain / 环境变量</span></div>
-              <div class="config-item"><span class="config-key">系统钥匙串授权</span><button id="btnAuthorizeEmail" class="btn btn-secondary btn-sm">授权邮箱</button></div>
-              <p class="text-muted">后台不会主动弹密码。首次使用或授权失效时点击授权；此操作不会发送测试邮件。</p>
+              <div class="config-item"><span class="config-key">邮箱凭据检查</span><button id="btnAuthorizeEmail" class="btn btn-secondary btn-sm">检查邮箱</button></div>
+              <p class="text-muted" id="emailSetupHelp">正在读取本机邮箱配置状态…</p>
+              <code id="emailSetupCommand" style="display:block;white-space:pre-wrap;overflow-wrap:anywhere;"></code>
               <div class="config-item"><span class="config-key">当前发信开关</span><span id="cfgSendState" class="config-val">仅预览模式</span></div>
               <div class="config-item"><span class="config-key">当前邮件格式</span><span id="cfgMailFormat" class="config-val">原文通知；文件仅标注名称</span></div>
             </div>
@@ -634,7 +637,7 @@
 
   <!-- Modals -->
   <!-- 1. Event Detail Modal -->
-  <div id="eventDetailModal" class="modal-overlay">
+  <div id="eventDetailModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modalEventTitle">
     <div class="modal-box">
       <div class="modal-header">
         <h3 id="modalEventTitle">讲座消息详情</h3>
@@ -678,10 +681,10 @@
   </div>
 
   <!-- 2. Email Preview Modal -->
-  <div id="emailPreviewModal" class="modal-overlay">
+  <div id="emailPreviewModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="emailPreviewTitle">
     <div class="modal-box">
       <div class="modal-header">
-        <h3>邮件通知预览</h3>
+        <h3 id="emailPreviewTitle">邮件通知预览</h3>
         <button class="btn btn-icon btn-sm close-modal-btn">✕</button>
       </div>
       <div class="modal-body">
@@ -703,7 +706,7 @@
   </div>
 
   <!-- 3. Confirm Modal -->
-  <div id="confirmModal" class="modal-overlay">
+  <div id="confirmModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
     <div class="modal-box" style="max-width: 440px;">
       <div class="modal-header">
         <h3 id="confirmModalTitle">确认操作</h3>

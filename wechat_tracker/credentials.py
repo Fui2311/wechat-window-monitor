@@ -17,6 +17,29 @@ _MAC_CREDENTIAL_CACHE = {}
 _MAC_CREDENTIAL_LOCK = threading.RLock()
 
 
+def credential_status(config):
+    """Describe setup without decrypting credentials or invoking native helpers."""
+    source = config
+    linked = config.get("email_credentials_config_path")
+    if linked:
+        from .config import load_config
+        path = Path(linked).expanduser()
+        if not path.is_absolute():
+            path = Path(config["config_path"]).parent / path
+        source = load_config(path)
+        if source.get("email_credentials_config_path"):
+            raise ValueError("邮箱凭据来源不支持多层引用")
+    email = source.get("email", {})
+    fields = ("smtp_user_env", "smtp_password_env", "from_env", "to_env")
+    environment_ready = all(email.get(key) and os.environ.get(email[key]) for key in fields)
+    backend = {"darwin": "macos_keychain", "win32": "windows_dpapi"}.get(sys.platform, "environment")
+    marker = {"darwin": "email.keychain", "win32": "email.credentials"}.get(sys.platform)
+    configured = bool(environment_ready or (marker and (Path(source["data_dir"]) / marker).is_file()))
+    return dict(configured=configured, backend=backend, settings_shared=bool(linked),
+                setup_config_path=str(source.get("config_path", "")), source_group=source.get("group", ""),
+                environment_variables=[email.get(field, "") for field in fields])
+
+
 def _credential_helper(config):
     capture = Path(config.get("capture", {}).get("mac_helper", ""))
     if capture.parent.name == "MacOS" and capture.parent.parent.name == "Contents":
@@ -133,6 +156,8 @@ def authorize_credentials(config):
         return {"configured": apply_credentials(config), "smtp_sent": False}
     marker = Path(config["data_dir"]) / "email.keychain"
     if not marker.is_file():
+        if apply_credentials(config):
+            return {"configured": True, "smtp_sent": False}
         raise ValueError("邮箱尚未配置，请先配置邮箱")
     if _credential_helper(config).name != "wechat-credentials":
         raise RuntimeError("请先安装独立邮箱授权助手")

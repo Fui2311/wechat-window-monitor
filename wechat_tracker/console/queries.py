@@ -1,10 +1,39 @@
 """Read-only SQLite views for captured evidence and database selection."""
 from contextlib import contextmanager
+from datetime import datetime
 import json
 from pathlib import Path
 import sqlite3
 from ..paths import PROJECT_ROOT
 from .presentation import _delivery_info
+
+
+def delivery_backlog(db_path: Path, now: str) -> dict:
+    """Conservative pending counts for explicit send-mode disclosure, without writes."""
+    result = dict(pending=0, due=0, retrying=0, failed=0, oldest_due_at=None)
+    current = datetime.fromisoformat(now)
+    oldest = None
+    if not db_path.is_file():
+        return result
+    with _safe_db_connect(db_path) as conn:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='outbox'").fetchone():
+            return result
+        for row in conn.execute("SELECT status, due_at, attempts FROM outbox WHERE status IN ('pending', 'dead')"):
+            if row['status'] == 'dead':
+                result['failed'] += 1
+                continue
+            result['pending'] += 1
+            result['retrying'] += bool(row['attempts'])
+            # All persisted due times are UTC ISO values; parse offsets for legacy rows.
+            try:
+                due = datetime.fromisoformat(row['due_at'].replace('Z', '+00:00'))
+                result['due'] += due <= current
+                if oldest is None or due < oldest:
+                    oldest = due
+                    result['oldest_due_at'] = row['due_at']
+            except (ValueError, TypeError, AttributeError):
+                pass
+    return result
 
 @contextmanager
 def _safe_db_connect(db_path: Path | str):

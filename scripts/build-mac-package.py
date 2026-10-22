@@ -2,12 +2,29 @@
 import hashlib
 import json
 from pathlib import Path
+import posixpath
+import re
 import runpy
 import tempfile
 import tomllib
 import zipfile
+from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def check_document_links(contents):
+    """Reject local inline documentation links that would be broken after unzip."""
+    for name, data in contents.items():
+        if not name.endswith(".md"):
+            continue
+        for target in re.findall(r"\]\(([^\s)]+)\)", data.decode("utf-8")):
+            link = urlsplit(target)
+            if link.scheme or link.netloc or not link.path:
+                continue
+            destination = posixpath.normpath(posixpath.join(posixpath.dirname(name), unquote(link.path)))
+            if destination not in contents:
+                raise ValueError(f"Missing packaged documentation target: {name} -> {target}")
 
 
 def build():
@@ -16,7 +33,7 @@ def build():
     files = {name: ROOT / name for name in ("README.md", "pyproject.toml", "CHANGELOG.md", "config.example.toml")}
     for doc_name in ("architecture.md", "deployment.md", "macos.md", "email.md", "llm-processing.md",
                  "automatic-forward.md", "macos-forward-background.md", "capture.md", "service.md",
-                 "database-recovery.md"):
+                 "database-recovery.md", "console-usage.md", "github-reuse.md"):
         files["docs/" + doc_name] = ROOT / "docs" / doc_name
     for folder, extensions in (("mac", {".py", ".command", ".toml"}),
                                ("wechat_tracker", {".py", ".swift", ".jsonl", ".html", ".css", ".js", ".toml"}),
@@ -25,8 +42,9 @@ def build():
             if path.is_file() and path.suffix in extensions and "__pycache__" not in path.parts:
                 files[path.relative_to(ROOT).as_posix()] = path
     contents = {path: source.read_bytes().replace(b"\r\n", b"\n") for path, source in files.items()}
+    check_document_links(contents)
     contents["PACKAGE-VALIDATION.json"] = json.dumps(dict(version=version, artifact="macOS source installer",
-        build_checks=["full-file SHA256", "ZIP CRC", "closed file allowlist"],
+        build_checks=["full-file SHA256", "ZIP CRC", "closed file allowlist", "local documentation links"],
         macos_native_compile="verified separately; see GitHub release validation",
         macos_live_capture="requires a logged-in, authorized target desktop",
         smtp_credentials_included=False, windows_runtime_included=False), indent=2).encode()

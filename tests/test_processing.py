@@ -260,6 +260,41 @@ class ProcessingTests(unittest.TestCase):
         self.assertIn('# preserve me', self.path.read_text())
         self.assertEqual(config['email']['smtp_host'], 'smtp.example.com')
 
+    def test_shared_settings_reject_save_without_changing_either_file_or_keys(self):
+        save_settings(self.config, dict(self.llm, api_key='source-test-key'))
+        follower = self.path.with_name('follower.toml')
+        follower.write_text('group="跟随群"\ndata_dir="follower"\nprocessing_config_path="config.toml"\n')
+        cfg = load_config(follower)
+        before = {path: path.read_bytes() for path in (self.path, follower, key_path(self.config))}
+        public = public_settings(cfg)
+        self.assertTrue(public['settings_shared'])
+        self.assertEqual(public['settings_source'], str(self.path.resolve()))
+        self.assertEqual(public['processing_mode'], 'llm')
+        for body in ({'processing_mode': 'rules'}, {'api_key': 'ignored-key'}, {'clear_api_key': True}):
+            with self.assertRaisesRegex(ValueError, '共享配置'):
+                save_settings(cfg, body)
+        self.assertFalse(key_path(cfg).exists())
+        for path, original in before.items():
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_shared_web_test_uses_source_model_and_key_with_follower_group(self):
+        save_settings(self.config, dict(self.llm, api_key='source-test-key'))
+        source = self.path
+        self.path = source.with_name('follower.toml')
+        self.path.write_text('group="跟随群"\ndata_dir="follower"\nprocessing_config_path="config.toml"\n')
+        base = self.start_web()
+        result = self.request(base+'/api/processing/test', {'text': self.message['text']})
+        self.assertFalse(result['sent'])
+        self.assertFalse(result['stored'])
+        _, auth, payload = ModelHandler.calls[-1]
+        self.assertEqual(auth, 'Bearer source-test-key')
+        self.assertEqual(payload['model'], self.llm['llm_model'])
+        self.assertEqual(result['events'][0]['source_group'], '跟随群')
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            self.request(base+'/api/processing', {'processing_mode': 'rules'})
+        self.assertEqual(error.exception.code, 400)
+        self.assertFalse((Path(self.temp.name)/'follower'/'tracker.sqlite3').exists())
+
     def test_failed_config_save_restores_key(self):
         save_settings(self.config, {'api_key': 'old'})
         with patch('wechat_tracker.extraction.settings.update_toml_root_keys', side_effect=OSError('disk')):

@@ -1,6 +1,6 @@
 # 可选自动转发检查（Windows 0.3.0 历史记录）
 
-macOS 当前操作入口见 [快速启动第4节](快速启动.md)：源码中的 `activate_click` 已在“邮件测试”群实测，无需用户手动打开卡片，会在空闲时短暂切到微信，读完恢复原应用与鼠标。该模式尚未部署到本机正式服务。详细证据见 [Mac 自动读取实验](macos-forward-background.md)。
+macOS 当前操作入口见 [部署指南](deployment.md)：源码中的 `activate_click` 已在“邮件测试”群实测，无需用户手动打开卡片，会在空闲时短暂切到微信，读完恢复原应用与鼠标。该模式尚未部署到本机正式服务。详细证据见 [Mac 自动读取实验](macos-forward-background.md)。
 
 以下保留 Windows 0.3.0 的运行方式、UIA 约束和历史验收，不作为 Mac 新模式的启动说明。
 
