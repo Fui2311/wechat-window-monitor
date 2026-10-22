@@ -9,6 +9,7 @@ const state = {
   currentFilter: 'all',
   searchQuery: '',
   selectedDb: localStorage.getItem('selectedDatabase') || '',
+  activeDbPath: localStorage.getItem('selectedDatabaseActive') || '',
   databases: [],
   services: [],
   events: [],
@@ -29,6 +30,8 @@ const state = {
   service: {},
   config: {},
   refreshTimer: null,
+  manualRefreshBusy: false,
+  switchGroupDirty: false,
   refreshInterval: 5000,
   autoScrollLogs: true,
   currentModalEvent: null,
@@ -229,7 +232,7 @@ async function refreshStatus() {
 
     // Fill switch group input if not focused or dirty
     const inputSwitch = document.getElementById('inputSwitchGroup');
-    if (inputSwitch && document.activeElement !== inputSwitch && !inputSwitch.value.trim()) {
+    if (inputSwitch && document.activeElement !== inputSwitch && !state.switchGroupDirty) {
       inputSwitch.value = cfg.group || '';
     }
 
@@ -407,8 +410,9 @@ async function loadDatabases() {
 
     const activeDb = state.databases.find(d => d.is_active);
     const activePath = activeDb?.path || '';
-    const previousActive = localStorage.getItem('selectedDatabaseActive');
+    const previousActive = state.activeDbPath;
     if (previousActive !== activePath) selectDatabase(activePath);
+    state.activeDbPath = activePath;
     localStorage.setItem('selectedDatabaseActive', activePath);
 
     // If state.selectedDb is empty or no longer in databases, default to active database
@@ -1090,9 +1094,13 @@ async function confirmSendService(action) {
   }
 }
 
-async function controlService(action, send = false, expectedGroup) {
+async function controlService(action, send = false, expectedGroup = state.config.group) {
   if (state.isConsoleStopped || state.isConsoleStopping) {
     showToast('控制台正在关闭或已关闭，无法执行监控操作', 'warning');
+    return;
+  }
+  if (!expectedGroup) {
+    showToast('尚未读取管理群，请先刷新控制台状态后再操作', 'warning');
     return;
   }
   let endpoint = `/api/service/${action}`;
@@ -1105,9 +1113,10 @@ async function controlService(action, send = false, expectedGroup) {
   showToast(`正在${actionLabel}...`, 'info');
 
   try {
-    await apiPost(endpoint, expectedGroup ? { expected_group: expectedGroup, send } : {});
-    await refreshStatus();
-    await loadServices();
+    const target = { expected_group: expectedGroup };
+    if (send) target.send = true;
+    await apiPost(endpoint, target);
+    await loadConsoleData();
     if (!state.isBackendOnline) throw new Error('无法确认操作后的后台状态，请恢复连接后检查');
 
     const isRunning = Boolean(state.service && state.service.running);
@@ -1136,8 +1145,7 @@ async function controlService(action, send = false, expectedGroup) {
     }
   } catch (err) {
     showToast(`操作失败: ${err.message}`, 'error');
-    try { await refreshStatus(); } catch (e) {}
-    try { await loadServices(); } catch (e) {}
+    try { await loadConsoleData(); } catch (e) {}
   } finally {
     if (!state.isConsoleStopped) {
       setServiceButtonsDisabled(false);
@@ -1281,13 +1289,38 @@ async function stopConsole() {
 
 // Periodic Refresh Scheduling (visibility-aware)
 function runPeriodicRefresh() {
-  if (state.isConsoleStopped || state.isConsoleStopping || document.hidden) return;
+  if (state.isConsoleStopped || state.isConsoleStopping || state.manualRefreshBusy || document.hidden) return;
   refreshStatus();
   if (state.currentTab === 'tab-events') { loadEvents(); loadOutbox(); }
   else if (state.currentTab === 'tab-messages') loadMessages();
   else if (state.currentTab === 'tab-outbox') loadOutbox();
   else if (state.currentTab === 'tab-logs') loadLogs();
   else if (state.currentTab === 'tab-config') loadServices();
+}
+
+async function loadConsoleData() {
+  await refreshStatus();
+  if (!state.isBackendOnline || state.isConsoleStopped || state.isConsoleStopping) return;
+  await loadDatabases();
+  if (state.isConsoleStopped || state.isConsoleStopping) return;
+  const reads = [loadEvents(), loadMessages(), loadOutbox(), loadServices()];
+  if (state.currentTab === 'tab-logs') reads.push(loadLogs());
+  await Promise.all(reads);
+}
+
+async function refreshConsoleData() {
+  if (state.isConsoleStopped || state.isConsoleStopping || state.manualRefreshBusy) return;
+  state.manualRefreshBusy = true;
+  const button = document.getElementById('manualRefreshBtn');
+  button.disabled = true;
+  for (const key of ['_lastEventsRenderKey', '_lastOutboxRenderKey', '_lastServicesRenderKey', '_lastLogsText']) state[key] = null;
+  showToast('正在刷新状态、数据源和记录…', 'info');
+  try {
+    await loadConsoleData();
+  } finally {
+    state.manualRefreshBusy = false;
+    if (!state.isConsoleStopped && !state.isConsoleStopping) button.disabled = false;
+  }
 }
 
 function startRefreshTimer() {
@@ -1407,6 +1440,7 @@ async function testProcessing() {
 
 // Event Listeners Setup
 function setupEventListeners() {
+  document.getElementById('inputSwitchGroup').addEventListener('input', () => { state.switchGroupDirty = true; });
   document.getElementById('btnReturnActive').onclick = () => {
     const active = state.databases.find(db => db.is_active);
     if (active) {
@@ -1581,6 +1615,7 @@ function setupEventListeners() {
               feedbackBox.className = 'feedback-box feedback-success';
               feedbackBox.textContent = `✓ ${res.message} (分配数据目录: ${res.data_dir})`;
               showToast(`已成功切换至群【${targetGroup}】`, 'success');
+              state.switchGroupDirty = false;
 
               // 切群成功后把 state.selectedDb 清空，再 await loadDatabases 并选中返回的当前活动库，禁止继续显示旧群库
               selectDatabase('');
@@ -1646,8 +1681,10 @@ function setupEventListeners() {
   document.getElementById('btnStartService').onclick = () => controlService('start', false);
   document.getElementById('btnStartSendService').onclick = () => confirmSendService('start');
   document.getElementById('btnStopService').onclick = () => {
-    showConfirm('停止微信监控', '确定要停止微信讲座监控服务吗？监控停止后将暂停捕获新消息，网页控制台仍可继续查看历史数据。', () => {
-      controlService('stop');
+    const group = state.config.group;
+    if (!group) return showToast('尚未读取管理群，请先刷新控制台状态后再操作', 'warning');
+    showConfirm('停止微信监控', `确定停止管理群「${group}」的监控吗？监控停止后将暂停捕获新消息，网页控制台仍可继续查看历史数据。`, () => {
+      controlService('stop', false, group);
     });
   };
   document.getElementById('btnRestartService').onclick = () => state.service.send_enabled ? confirmSendService('restart') : controlService('restart');
@@ -1760,19 +1797,7 @@ function setupEventListeners() {
   };
 
   // Refresh
-  document.getElementById('manualRefreshBtn').onclick = () => {
-    state._lastEventsRenderKey = null;
-    state._lastOutboxRenderKey = null;
-    state._lastServicesRenderKey = null;
-    state._lastLogsText = null;
-    refreshStatus();
-    loadEvents();
-    loadMessages();
-    loadOutbox();
-    loadServices();
-    if (state.currentTab === 'tab-logs') loadLogs();
-    showToast('正在刷新数据...', 'info');
-  };
+  document.getElementById('manualRefreshBtn').onclick = refreshConsoleData;
 
   document.getElementById('autoRefreshSelect').onchange = (e) => {
     const val = parseInt(e.target.value, 10);
