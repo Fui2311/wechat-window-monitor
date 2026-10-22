@@ -9,6 +9,17 @@ from wechat_tracker.config import update_toml_root_keys
 
 
 class GroupConfigEditTests(unittest.TestCase):
+    def test_crlf_inline_comment_is_not_duplicated_on_save(self):
+        original = 'group = "before" # keep comment\r\ndata_dir = "state"\r\n[capture]\r\nsource = "jsonl"\r\n'
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            path.write_bytes(original.encode("utf-8"))
+            update_toml_root_keys(path, {"group": "after"})
+            result = path.read_bytes()
+            self.assertNotIn(b"\r\r\n", result)
+            self.assertIn(b"# keep comment\r\n", result)
+            self.assertEqual(tomllib.loads(result.decode())["group"], "after")
+
     def test_commented_table_header_does_not_turn_nested_group_into_root_key(self):
         original = ('group = "before" # exact window title\n'
                     'data_dir = "state"\n'
