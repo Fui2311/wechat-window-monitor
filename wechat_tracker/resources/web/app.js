@@ -1343,6 +1343,10 @@ function renderProcessing(cfg, refill = false) {
     : '配置持续保存，适用于当前配置后续所有新消息。切换数据源仅查看记录，不改变处理配置。';
   processingBusy(Boolean(state.processingSaving));
   const mode = cfg.processing_mode || 'rules';
+  const settings = document.getElementById('llmSettings');
+  if (!state.processingInitialized) settings.open = mode === 'llm';
+  else if (mode === 'llm' && state.processingDisclosureMode !== mode) settings.open = true;
+  state.processingDisclosureMode = mode;
   const mailFormat = mode === 'llm' ? 'LLM 提取信息 + 完整原文（失败时回退原文）' : '原文通知；文件仅标注名称';
   document.getElementById('processingMailFormat').textContent = `当前新通知邮件格式：${mailFormat}。随处理方式一起切换，已入队通知保留生成时的格式。`;
   document.getElementById('cfgMailFormat').textContent = mailFormat;
@@ -1458,7 +1462,10 @@ function setupEventListeners() {
     event.preventDefault(); saveProcessing();
   });
   document.getElementById('btnProcessingRules').onclick = () => saveProcessing('rules');
-  document.getElementById('btnProcessingLlm').onclick = () => saveProcessing('llm');
+  document.getElementById('btnProcessingLlm').onclick = () => {
+    document.getElementById('llmSettings').open = true;
+    saveProcessing('llm');
+  };
   document.getElementById('btnTestProcessing').onclick = testProcessing;
 
   // Tabs

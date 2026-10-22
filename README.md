@@ -2,7 +2,7 @@
 
 本地采集指定微信群的可读消息，识别讲座与学术报告，保留原文，并生成邮件通知与日历文件。提供命令行和浏览器控制台，支持 macOS Accessibility、Windows UIAutomation 和离线 JSONL 输入。
 
-**正式版本：1.0.3 · Python 3.11+ · 核心运行时无第三方 Python 依赖。** 安装包见 [GitHub Releases](https://github.com/Fui2311/wechat_tracking/releases)。
+**正式版本：1.0.4 · Python 3.11+ · 核心运行时无第三方 Python 依赖。** 安装包见 [GitHub Releases](https://github.com/Fui2311/wechat_tracking/releases)。
 
 默认使用本地规则、仅预览邮件；启用 LLM 后才向所配置的兼容接口发送待分析正文，显式启用发信后才投递 SMTP。不会向微信群发送消息或代替用户报名。
 
@@ -40,7 +40,7 @@ Windows PowerShell 用 `python` 创建环境，激活命令为 `.\.venv\Scripts\
 
 ### macOS 实时部署
 
-推荐下载 Release 中的 `WeChatLectureTracker-macOS-1.0.3.zip`，解压后执行：
+推荐下载 Release 中的 `WeChatLectureTracker-macOS-1.0.4.zip`，解压后执行：
 
 ```bash
 python3 mac/verify-package.py .
@@ -115,7 +115,7 @@ wechat-track --config config.local.toml email setup
 wechat-track --config config.local.toml service install --send
 ```
 
-控制台会区分“查看的数据源”和“操作的管理群”。手动刷新同时发现新增数据源并保留未保存草稿；停止确认绑定当时的管理群，切群后的过期请求会被拒绝。开启发信前展示当前管理群的已有积压，历史待发通知可能立即投递；Demo 始终只预览。LLM 设置可在控制台修改并于下一条新消息生效；默认规则模式不调用网络。控制台的模型测试只处理输入框里的文字，不入库、不入队、不发信，但会调用所选模型接口。详见 [邮箱配置](docs/email.md)、[模型处理](docs/llm-processing.md) 和 [控制台使用流程](docs/console-usage.md)。
+控制台会区分“查看的数据源”和“操作的管理群”。默认规则模式收起可选 LLM 参数，按需展开；手动刷新同时发现新增数据源并保留未保存草稿；停止确认绑定当时的管理群，切群后的过期请求会被拒绝。开启发信前展示当前管理群的已有积压，历史待发通知可能立即投递；Demo 始终只预览。LLM 设置可在控制台修改并于下一条新消息生效；默认规则模式不调用网络。控制台的模型测试只处理输入框里的文字，不入库、不入队、不发信，但会调用所选模型接口。详见 [邮箱配置](docs/email.md)、[模型处理](docs/llm-processing.md) 和 [控制台使用流程](docs/console-usage.md)。
 
 ## 项目模块与结构
 
