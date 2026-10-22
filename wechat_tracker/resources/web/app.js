@@ -31,6 +31,8 @@ const state = {
   config: {},
   refreshTimer: null,
   manualRefreshBusy: false,
+  calendarExportBusy: false,
+  calendarRequest: 0,
   switchGroupDirty: false,
   refreshInterval: 5000,
   autoScrollLogs: true,
@@ -105,6 +107,10 @@ function reportDataError(section, error) {
   const message = String(error.message || error).slice(0, 180);
   if (errors[section] !== message) showToast(`${section}读取失败：${message}`, 'error', 6000);
   errors[section] = message;
+}
+
+function clearDataError(section) {
+  if (state.lastDataErrors) delete state.lastDataErrors[section];
 }
 
 function showToast(message, type = 'info', duration = 3500) {
@@ -205,6 +211,17 @@ async function apiPost(endpoint, body = {}) {
   return await res.json();
 }
 
+function serviceStatusView(service) {
+  if (service.status === 'database_error') return {label:'数据库异常', summary:'数据库异常', level:'danger', color:'red'};
+  if (!service.running) return service.status === 'stopped_or_unresponsive'
+    ? {label:'停止或无响应', summary:'状态待核对', level:'danger', color:'red'}
+    : {label:'服务未启动', summary:'已停止', level:'danger', color:'red'};
+  if (service.status === 'monitoring') return {label:'监控中', summary:'监控运行中', level:'success', color:'green'};
+  if (service.status === 'waiting_for_weixin') return {label:'等待微信窗口', summary:'等待微信', level:'warning', color:'amber'};
+  if (service.status === 'starting') return {label:'服务启动中', summary:'启动中', level:'warning', color:'amber'};
+  return {label:'采集待确认', summary:'运行待核对', level:'warning', color:'amber'};
+}
+
 // Status & Dashboard updater
 async function refreshStatus() {
   if (state.isConsoleStopping || state.isConsoleStopped) return;
@@ -236,27 +253,12 @@ async function refreshStatus() {
       inputSwitch.value = cfg.group || '';
     }
 
-    if (svc.running) {
-      if (svc.status !== 'monitoring') {
-        statusBadge.className = 'badge badge-warning';
-        dot.className = 'status-indicator pulse-amber';
-        statusText.textContent = svc.status === 'waiting_for_weixin' ? '等待微信窗口' : '服务启动中';
-        document.getElementById('kpiServiceState').textContent = svc.status === 'waiting_for_weixin' ? '等待微信' : '启动中';
-        document.getElementById('kpiServiceState').style.color = 'var(--amber)';
-      } else {
-        statusBadge.className = 'badge badge-success';
-        dot.className = 'status-indicator pulse-green';
-        statusText.textContent = '监控中';
-        document.getElementById('kpiServiceState').textContent = '监控运行中';
-        document.getElementById('kpiServiceState').style.color = 'var(--green)';
-      }
-    } else {
-      statusBadge.className = 'badge badge-danger';
-      dot.className = 'status-indicator pulse-red';
-      statusText.textContent = '服务未启动';
-      document.getElementById('kpiServiceState').textContent = '已停止';
-      document.getElementById('kpiServiceState').style.color = 'var(--text-secondary)';
-    }
+    const serviceView = serviceStatusView(svc);
+    statusBadge.className = `badge badge-${serviceView.level}`;
+    dot.className = `status-indicator pulse-${serviceView.color}`;
+    statusText.textContent = serviceView.label;
+    document.getElementById('kpiServiceState').textContent = serviceView.summary;
+    document.getElementById('kpiServiceState').style.color = `var(--${serviceView.color})`;
 
     // KPI 1: Service
     const pidText = svc.running && svc.pid ? `PID: ${svc.pid}` : '无运行进程';
@@ -319,21 +321,21 @@ async function refreshStatus() {
     if (offlineBanner) {
       offlineBanner.style.display = 'flex';
       const textEl = document.getElementById('offlineBannerText');
-      if (textEl) textEl.textContent = `后台服务连接失败 (${err.message})。请检查控制台服务是否正在运行。`;
+      if (textEl) textEl.textContent = `后台状态读取失败 (${err.message})。请检查控制台服务和配置后刷新重试；当前监控状态尚未确认。`;
     }
 
     statusBadge.className = 'badge badge-danger';
     dot.className = 'status-indicator pulse-red';
-    statusText.textContent = '连接断开 / 离线';
+    statusText.textContent = '后台状态不可用';
 
     const kpiState = document.getElementById('kpiServiceState');
     if (kpiState) {
-      kpiState.textContent = '后台离线';
+      kpiState.textContent = '状态读取失败';
       kpiState.style.color = 'var(--red)';
     }
 
     const kpiDetail = document.getElementById('kpiServiceDetail');
-    if (kpiDetail) kpiDetail.textContent = '无法连接到控制后台';
+    if (kpiDetail) kpiDetail.textContent = '无法确认当前监控状态，请检查后台服务和配置';
   }
 }
 
@@ -375,6 +377,7 @@ function selectDatabase(path) {
     state.outboxRequest++;
     state.messageRequest++;
     state.previewRequest++;
+    state.calendarRequest++;
     state.events = [];
     state.outbox = [];
     state.messages = [];
@@ -404,6 +407,7 @@ async function loadDatabases() {
   try {
     const data = await apiGet('/api/databases');
     if (request !== state.databaseRequest || state.isConsoleStopping || state.isConsoleStopped) return;
+    clearDataError('数据源');
     state.databases = data.databases || [];
     const select = document.getElementById('databaseSelect');
     select.innerHTML = '';
@@ -456,6 +460,7 @@ async function loadEvents() {
     const url = db ? `/api/events?db=${encodeURIComponent(db)}` : '/api/events';
     const data = await apiGet(url);
     if (request !== state.eventsRequest || db !== state.selectedDb || state.isConsoleStopping || state.isConsoleStopped) return;
+    clearDataError('讲座数据');
     state.events = data.events || [];
     const selectedDatabase = state.databases.find(db => db.path === state.selectedDb);
     if (selectedDatabase) {
@@ -474,6 +479,7 @@ async function loadEvents() {
     renderEvents();
   } catch (err) {
     if (request !== state.eventsRequest || db !== state.selectedDb || state.isConsoleStopping || state.isConsoleStopped) return;
+    state._lastEventsRenderKey = null;
     document.getElementById('kpiEventsDetail').textContent = '读取失败；请刷新重试。当前内容仅为所选数据源上次成功读取的记录。';
     if (!state.events.length) document.getElementById('eventsListContainer').textContent = '所选数据源读取失败，请刷新重试。';
     console.error('Failed to load events:', err);
@@ -552,7 +558,7 @@ async function loadMessages() {
     document.getElementById('messagesPageInfo').textContent = `${first}–${state.messageOffset + state.messages.length} / ${data.total} 条`;
     document.getElementById('btnMessagesPrevious').disabled = state.messageOffset === 0;
     document.getElementById('btnMessagesNext').disabled = !data.has_more;
-    if (state.lastDataErrors) delete state.lastDataErrors['采集消息'];
+    clearDataError('采集消息');
     renderMessages();
   } catch (error) {
     if (request !== state.messageRequest || db !== state.selectedDb || state.isConsoleStopping || state.isConsoleStopped) return;
@@ -607,7 +613,8 @@ function renderEvents() {
     );
   }
 
-  const renderKey = `${state.selectedDb}|${state.searchQuery}|${filtered.length}|` +
+  const selected = state.databases.find(db => db.path === state.selectedDb);
+  const renderKey = `${state.selectedDb}|${selected?.is_active}|${selected?.is_demo}|${selected?.group_name}|${state.config.group}|${state.searchQuery}|${filtered.length}|` +
     filtered.map(e => `${e.id}:${e.version || 1}:${e.updated_at || ''}:${JSON.stringify(e.delivery || {})}`).join(';');
   if (state._lastEventsRenderKey === renderKey) {
     return;
@@ -617,7 +624,12 @@ function renderEvents() {
   container.innerHTML = '';
 
   if (filtered.length === 0) {
-    const currentGroup = (state.databases.find(db => db.path === state.selectedDb) || {}).group_name || (state.config && state.config.group) || '目标微信群';
+    const currentGroup = selected?.group_name || state.config.group || '目标微信群';
+    const emptyHint = state.searchQuery.trim()
+      ? '没有匹配当前搜索的讲座记录，请清除搜索或更换关键词。'
+      : selected?.is_demo ? '演示库中暂无讲座记录，可在配置页重新运行 Demo 回放；演示不会发送邮件。'
+      : selected && !selected.is_active ? '此数据源只读展示已保存记录。可查看采集消息，或点击「返回当前群」查看当前监控。'
+      : `当前群「${currentGroup}」尚无讲座记录。请先启动预览并检查成功采样，采集到符合规则的新讲座后会在此显示。`;
     container.innerHTML = `
       <div class="empty-state">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -627,7 +639,7 @@ function renderEvents() {
           <line x1="3" y1="10" x2="21" y2="10"></line>
         </svg>
         <h4>未找到讲座相关消息</h4>
-        <p>当前所选数据库中暂无符合条件的讲座记录。当微信目标群【${escapeHtml(currentGroup)}】捕获到新的讲座通知时，将通知并展示在此处。</p>
+        <p>${escapeHtml(emptyHint)}</p>
       </div>
     `;
     return;
@@ -714,6 +726,7 @@ async function loadOutbox() {
     const url = db ? `/api/outbox?db=${encodeURIComponent(db)}` : '/api/outbox';
     const data = await apiGet(url);
     if (request !== state.outboxRequest || db !== state.selectedDb || state.isConsoleStopping || state.isConsoleStopped) return;
+    clearDataError('通知队列');
     state.outbox = data.jobs || [];
     state.deliveryLoaded = true;
     const states = state.outbox.map(job => job.delivery?.state);
@@ -824,7 +837,9 @@ async function loadServices() {
     if (scope && !state.processing?.settings_shared) scope.textContent = `设置持续用于当前管理群【${state.config.group || '当前群'}】${followers.length ? '以及跟随此配置的服务【' + followers.join('、') + '】' : ''}。切换数据源仅查看对应群记录，不会更换监控群。`;
 
 
-    const servicesKey = state.services.map(s => `${s.data_dir}:${s.instance}:${s.running}:${s.status}:${s.send_enabled}:${s.reset_supported}:${s.reset_at}:${s.processing_mode}:${s.processing_settings_shared}:${s.processing_last_at}:${s.processing_last_error}`).join(';');
+    const servicesKey = JSON.stringify(state.services.map(s => [s.data_dir, s.instance, s.group, s.pid,
+      s.is_current, s.running, s.status, s.send_enabled, s.reset_supported, s.reset_at, s.processing_mode,
+      s.processing_settings_shared, s.processing_last_at, s.processing_last_method, s.processing_last_error]));
     if (state._lastServicesRenderKey === servicesKey) {
       return;
     }
@@ -841,12 +856,8 @@ async function loadServices() {
       const isCur = svc.is_current;
       const running = svc.running;
 
-      let statusBadge = '<span class="badge badge-neutral">已停止</span>';
-      if (running) {
-        statusBadge = svc.status === 'waiting_for_weixin'
-          ? '<span class="badge badge-warning">等待微信</span>'
-          : '<span class="badge badge-success">监控中</span>';
-      }
+      const serviceView = serviceStatusView(svc);
+      const statusBadge = `<span class="badge badge-${serviceView.level}">${serviceView.label}</span>`;
 
       let opHtml = '<span style="color: var(--text-tertiary); font-size: 12px;">--</span>';
       if (running) {
@@ -931,6 +942,7 @@ async function loadServices() {
     });
   } catch (err) {
     if (request !== state.servicesRequest || state.isConsoleStopping || state.isConsoleStopped) return;
+    state._lastServicesRenderKey = null;
     console.warn('Failed to load services:', err);
     tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--red); padding: 16px;">获取服务列表失败: ${escapeHtml(err.message)}</td></tr>`;
   }
@@ -945,6 +957,7 @@ async function loadLogs() {
     const data = await apiGet('/api/logs?lines=200');
     if (request !== state.logsRequest || managedDir !== state.config.data_dir || state.isConsoleStopping || state.isConsoleStopped) return;
     const container = document.getElementById('terminalBody');
+    clearDataError('运行日志');
     const lines = data.lines || [];
 
     const logsKey = lines.join('\n');
@@ -1330,6 +1343,52 @@ function startRefreshTimer() {
   }
   if (!state.isConsoleStopped && !state.isConsoleStopping && state.refreshInterval > 0) {
     state.refreshTimer = setInterval(runPeriodicRefresh, state.refreshInterval);
+  }
+}
+
+async function exportCalendar() {
+  if (state.isConsoleStopped || state.isConsoleStopping || state.calendarExportBusy) return;
+  const button = document.getElementById('btnExportIcs');
+  const db = state.selectedDb;
+  const request = ++state.calendarRequest;
+  state.calendarExportBusy = true;
+  button.disabled = true;
+  showToast('正在生成所选数据源的日历…', 'info');
+  try {
+    const response = await fetch(db ? `/api/calendar/export?db=${encodeURIComponent(db)}` : '/api/calendar/export');
+    const content = await response.text();
+    if (state.isConsoleStopped || state.isConsoleStopping) return;
+    if (request !== state.calendarRequest || db !== state.selectedDb) {
+      showToast('数据源已变更，请核对后重新导出日历', 'warning');
+      return;
+    }
+    if (!response.ok) {
+      let message = content || `HTTP ${response.status}`;
+      try { message = JSON.parse(content).error || message; } catch (error) {}
+      throw new Error(message);
+    }
+    if (!content.startsWith('BEGIN:VCALENDAR')) throw new Error('后台未返回有效日历，请检查后重试');
+    const count = (content.match(/^BEGIN:VEVENT\r?$/gm) || []).length;
+    if (!count) {
+      showToast('所选数据源没有可导出的明确活动时间，请查看讲座原文；本次没有下载文件', 'warning');
+      return;
+    }
+    const objectUrl = URL.createObjectURL(new Blob([content], {type:'text/calendar;charset=utf-8'}));
+    try {
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = 'lectures.ics';
+      document.body.appendChild(link);
+      try { link.click(); } finally { link.remove(); }
+      showToast(`日历已生成（${count} 项），已请求浏览器下载；保存位置由浏览器决定`, 'success');
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+    }
+  } catch (error) {
+    if (request === state.calendarRequest && db === state.selectedDb && !state.isConsoleStopped && !state.isConsoleStopping) showToast(`日历导出失败：${error.message}`, 'error');
+  } finally {
+    state.calendarExportBusy = false;
+    if (!state.isConsoleStopped && !state.isConsoleStopping) button.disabled = false;
   }
 }
 
@@ -1731,28 +1790,8 @@ function setupEventListeners() {
     }
   };
 
-  // Export ICS
-  document.getElementById('btnExportIcs').onclick = () => {
-    if (state.isConsoleStopped || state.isConsoleStopping) {
-      showToast('控制台正在关闭或已关闭，无法导出日历', 'info');
-      return;
-    }
-    const btn = document.getElementById('btnExportIcs');
-    btn.disabled = true;
-    const url = state.selectedDb ? `/api/calendar/export?db=${encodeURIComponent(state.selectedDb)}` : '/api/calendar/export';
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'lectures.ics';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    showToast('正在导出 ICS 日历文件...', 'success');
-    setTimeout(() => {
-      if (!state.isConsoleStopped) {
-        btn.disabled = false;
-      }
-    }, 1200);
-  };
+  // Export the selected source after checking the HTTP response.
+  document.getElementById('btnExportIcs').onclick = exportCalendar;
 
   // Demo runner: Demo API 返回 db 路径，演示后自动选择并明确标记为 Demo 只读
   document.getElementById('btnRunDemo').onclick = async () => {
