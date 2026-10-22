@@ -31,7 +31,7 @@ function harness(storage = new Map()) {
   vm.runInContext(source + `\napiGet = url => request(url); apiPost = (url, body) => post(url, body);
     renderEvents = () => {}; renderOutbox = () => {}; showToast = () => {};
     globalThis.app = {state, selectDatabase, loadDatabases, loadEvents, loadOutbox, openEmailPreview,
-      renderProcessing, saveProcessing, confirmSendService, refreshStatus};`, ctx);
+      renderProcessing, saveProcessing, confirmSendService, refreshStatus, formatTime, formatClockTime, formatCaptureTime};`, ctx);
   return {ctx, app:ctx.app, get, storage};
 }
 const db = path => ({path, label:path, group_name:path, is_active:path==='A'});
@@ -191,4 +191,20 @@ test('a status requested before saving cannot revert the saved processing indica
   await app.saveProcessing('llm');
   pending.resolve({service:{},config:{processing:{processing_mode:'rules'}}});await old;
   assert.equal(app.state.processing.processing_mode,'llm');
+});
+
+test('event, capture and status clocks follow configured timezone including DST and midnight', () => {
+  const {app}=harness();
+  app.state.config.timezone='Asia/Shanghai';
+  assert.equal(app.formatTime('2026-10-24T07:00:09Z'),'2026-10-24 15:00');
+  assert.equal(app.formatClockTime('2026-10-24T07:00:09Z'),'15:00:09');
+  assert.equal(app.formatCaptureTime('2026-10-24T07:00:09Z'),'2026-10-24 15:00:09');
+  assert.equal(app.formatTime('2026-10-23T16:00:00Z'),'2026-10-24 00:00');
+  app.state.config.timezone='UTC';
+  assert.equal(app.formatTime('2026-10-24T07:00:09Z'),'2026-10-24 07:00');
+  app.state.config.timezone='America/New_York';
+  assert.equal(app.formatTime('2026-10-24T07:00:09Z'),'2026-10-24 03:00');
+  assert.equal(app.formatTime('2026-12-24T07:00:09Z'),'2026-12-24 02:00');
+  assert.equal(app.formatTime('not a date'),'');
+  assert.equal(app.formatCaptureTime(null),'未记录');
 });

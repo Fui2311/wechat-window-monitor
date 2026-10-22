@@ -39,16 +39,27 @@ const state = {
 };
 
 // Utilities
-function formatTime(isoString) {
-  if (!isoString) return '';
+const dateFormatters = new Map();
+
+function dateParts(isoString) {
+  if (!isoString) return null;
   try {
-    const d = new Date(isoString);
-    if (isNaN(d.getTime())) return '';
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  } catch (e) {
-    return '';
+    const date = new Date(isoString);
+    if (isNaN(date.getTime())) return null;
+    const zone = state.config.timezone || 'Asia/Shanghai';
+    if (!dateFormatters.has(zone)) dateFormatters.set(zone, new Intl.DateTimeFormat('en-GB', {
+      timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    }));
+    return Object.fromEntries(dateFormatters.get(zone).formatToParts(date).map(part => [part.type, part.value]));
+  } catch (error) {
+    return null;
   }
+}
+
+function formatTime(isoString) {
+  const parts = dateParts(isoString);
+  return parts ? `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}` : '';
 }
 
 function displayEventTime(isoString, rawText) {
@@ -71,14 +82,8 @@ function signupLinkHtml(value) {
 
 function formatClockTime(isoString) {
   if (!isoString) return '--';
-  try {
-    const d = new Date(isoString);
-    if (isNaN(d.getTime())) return String(isoString);
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  } catch (e) {
-    return '--';
-  }
+  const parts = dateParts(isoString);
+  return parts ? `${parts.hour}:${parts.minute}:${parts.second}` : String(isoString);
 }
 
 function escapeHtml(text) {
@@ -473,8 +478,8 @@ async function loadEvents() {
 }
 
 function formatCaptureTime(value) {
-  const formatted = formatTime(value);
-  return formatted ? `${formatted}:${String(new Date(value).getSeconds()).padStart(2, '0')}` : '未记录';
+  const parts = dateParts(value);
+  return parts ? `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}` : '未记录';
 }
 
 function nestedMessageText(message, depth = 0) {
