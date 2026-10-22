@@ -265,8 +265,12 @@ class WebControlHandler(BaseHTTPRequestHandler):
                 offset = int(query.get("offset", ["0"])[0])
                 if not 1 <= limit <= 500 or offset < 0:
                     raise ValueError("Message limit must be 1–500 and offset must be nonnegative")
+                snapshot = int(query["snapshot"][0]) if "snapshot" in query else None
+                if snapshot is not None and not 0 <= snapshot <= 9223372036854775807:
+                    raise ValueError("Message snapshot must be a nonnegative SQLite row ID")
                 data = _captured_messages(db_path, category=category,
-                                          search=query.get("q", [""])[0].strip(), limit=limit, offset=offset)
+                                          search=query.get("q", [""])[0].strip(), limit=limit, offset=offset,
+                                          snapshot=snapshot)
                 return self._send_json(dict(data, ok=True, db=str(db_path)))
 
             if path == "/api/outbox":

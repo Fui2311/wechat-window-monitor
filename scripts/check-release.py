@@ -84,6 +84,11 @@ with ExitStack() as isolation:
             assert response.status == 200, (path, response.status, payload)
             if path.startswith('/api/') and path != '/api/calendar/export':
                 assert json.loads(payload)['ok'] is True, path
+            if path == '/api/databases':
+                databases = json.loads(payload)['databases']
+                assert any(item.get('is_demo') and item['path'].endswith('demo.sqlite3') for item in databases)
+            if path == '/api/messages':
+                assert json.loads(payload)['snapshot'] > 0
             client.close()
     finally:
         server.shutdown()

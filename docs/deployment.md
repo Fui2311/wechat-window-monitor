@@ -1,4 +1,4 @@
-# 部署、升级与发布（1.1.1）
+# 部署、升级与发布（1.1.2）
 
 ## 部署选择
 
@@ -59,7 +59,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m wechat_tracker --config config.local.toml web --open
 ```
 
-从 wheel 安装时将 `pip install .` 换为 `pip install 路径\wechat_lecture_tracker-1.1.1-py3-none-any.whl`。当前用户登录任务要使用创建时的 Python 路径；不要安装后移动或删除虚拟环境。需保持微信在线及目标独立群窗口可读，注销/锁屏不能视作可靠采集环境。更多细节见 [服务说明](service.md)。
+从 wheel 安装时将 `pip install .` 换为 `pip install 路径\wechat_lecture_tracker-1.1.2-py3-none-any.whl`。当前用户登录任务要使用创建时的 Python 路径；不要安装后移动或删除虚拟环境。需保持微信在线及目标独立群窗口可读，注销/锁屏不能视作可靠采集环境。更多细节见 [服务说明](service.md)。
 
 ## 邮箱和 LLM
 

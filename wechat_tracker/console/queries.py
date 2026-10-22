@@ -49,12 +49,12 @@ def _safe_db_connect(db_path: Path | str):
         conn.close()
 
 
-def _captured_messages(db_path: Path, *, category="all", search="", limit=100, offset=0) -> dict:
+def _captured_messages(db_path: Path, *, category="all", search="", limit=100, offset=0, snapshot=None) -> dict:
     """Read stored capture evidence without reanalysis or database writes."""
     counts = {"all": 0, "non_lecture": 0, "lecture": 0}
     result = {"messages": [], "counts": counts, "total": 0, "offset": offset,
               "limit": limit, "has_more": False, "latest_received_at": None,
-              "last_success_at": None, "unreadable_count": 0}
+              "last_success_at": None, "unreadable_count": 0, "snapshot": snapshot or 0}
     if not db_path.is_file():
         return result
 
@@ -75,6 +75,11 @@ def _captured_messages(db_path: Path, *, category="all", search="", limit=100, o
             result["last_success_at"] = row[0]
         if "messages" not in tables:
             return result
+        # Freeze the append boundary, including late captures with older timestamps.
+        # No schema migration or writes are needed for a read-only history view.
+        if snapshot is None:
+            snapshot = conn.execute("SELECT COALESCE(MAX(rowid), 0) FROM messages").fetchone()[0]
+        result["snapshot"] = snapshot
 
         def related(node, group, inherited_id="", depth=0):
             if not isinstance(node, dict) or depth > 6:
@@ -100,8 +105,8 @@ def _captured_messages(db_path: Path, *, category="all", search="", limit=100, o
             return (any(search.casefold() in item.get(key, "").casefold() for key in ("sender", "text", "name"))
                     or any(matches_search(child) for key in ("children", "attachments") for child in item.get(key, [])))
 
-        query = "SELECT key, payload, received_at FROM messages ORDER BY received_at DESC, rowid DESC"
-        for row in conn.execute(query):
+        query = "SELECT key, payload, received_at FROM messages WHERE rowid <= ? ORDER BY received_at DESC, rowid DESC"
+        for row in conn.execute(query, (snapshot,)):
             if result["latest_received_at"] is None:
                 result["latest_received_at"] = row["received_at"]
             try:

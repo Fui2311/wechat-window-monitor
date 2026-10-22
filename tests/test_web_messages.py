@@ -100,6 +100,25 @@ class CapturedMessagesTests(unittest.TestCase):
         self.assertEqual(nested["messages"][0]["id"], "parent")
         self.assertEqual(self.get(q="received_at")[1]["total"], 0)
 
+    def test_pagination_snapshot_excludes_new_arrivals_until_a_fresh_read(self):
+        path = self.root / "paging.sqlite3"
+        with closing(Store(path)) as store:
+            for index in range(5):
+                store.db.execute("INSERT INTO messages VALUES (?,?,?)", (
+                    str(index), json.dumps({"id": str(index), "text": "合成历史"}), f"2026-10-17T00:00:0{index}Z"))
+            store.db.commit()
+            _, first = self.get(db=str(path), limit=2)
+            store.db.execute("INSERT INTO messages VALUES (?,?,?)", (
+                "new", '{"id":"new","text":"新到消息"}', "2026-10-18T00:00:00Z"))
+            store.db.commit()
+            before = path.read_bytes()
+            _, second = self.get(db=str(path), limit=2, offset=2, snapshot=first.get("snapshot", "missing"))
+            self.assertEqual([item["id"] for item in first["messages"] + second["messages"]], ["4", "3", "2", "1"])
+            self.assertEqual(second["total"], 5)
+            self.assertEqual(second["counts"]["all"], 5)
+            self.assertEqual(path.read_bytes(), before)
+            self.assertEqual(self.get(db=str(path))[1]["messages"][0]["id"], "new")
+
     def test_new_nonlecture_capture_appears_on_next_read_without_duplicate_or_mail(self):
         path = self.root / "fresh.sqlite3"
         store = Store(path)
@@ -131,7 +150,8 @@ class CapturedMessagesTests(unittest.TestCase):
         self.assertEqual(self.db_path.read_bytes(), self.before)
 
     def test_invalid_pagination_category_and_unauthorized_path_are_rejected(self):
-        for params in ({"limit": 0}, {"limit": 501}, {"offset": -1}, {"limit": "oops"}, {"category": "unknown"}):
+        for params in ({"limit": 0}, {"limit": 501}, {"offset": -1}, {"limit": "oops"}, {"category": "unknown"},
+                       {"snapshot": -1}, {"snapshot": "oops"}, {"snapshot": 9223372036854775808}):
             with self.subTest(params=params):
                 self.assertEqual(self.get(**params)[0], 400)
         self.assertEqual(self.get(db="/etc/private.sqlite3")[0], 403)

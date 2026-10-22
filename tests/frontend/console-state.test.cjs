@@ -38,7 +38,7 @@ function harness(storage = new Map(), realRenderers = false) {
   vm.runInContext(source + `\n
     ${realRenderers ? '' : 'renderEvents = () => {}; renderOutbox = () => {};'} showToast = () => {};
     globalThis.app = {state, selectDatabase, loadDatabases, loadEvents, loadOutbox, openEmailPreview,
-      renderProcessing, saveProcessing, confirmSendService, refreshStatus, formatTime, formatClockTime, formatCaptureTime, refreshConsoleData, controlService, loadServices, renderEvents, serviceStatusView, exportCalendar};`, ctx);
+      renderProcessing, saveProcessing, confirmSendService, refreshStatus, formatTime, formatClockTime, formatCaptureTime, refreshConsoleData, controlService, loadServices, renderEvents, serviceStatusView, exportCalendar, loadMessages, searchMessages};`, ctx);
   return {ctx, app:ctx.app, get, storage};
 }
 const db = path => ({path, label:path, group_name:path, is_active:path==='A'});
@@ -220,6 +220,7 @@ test('manual refresh discovers sources before loading records and preserves the 
   const storage = new Map([['selectedDatabase','B'],['selectedDatabaseActive','A']]);
   const {ctx,app,get}=harness(storage);const inventory=deferred();const calls=[];
   app.state.processingDirty=true;app.state.processingInitialized=true;get('llmModel').value='unsaved draft';
+  app.state.messageOffset=100;app.state.messageSnapshot=200;
   ctx.request=async url=>{
     calls.push(url);
     if(url==='/api/status')return {service:{},config:{group:'A',processing:{llm_model:'saved model'}}};
@@ -234,6 +235,8 @@ test('manual refresh discovers sources before loading records and preserves the 
   await new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(calls,['/api/status','/api/databases']);
   assert.equal(get('manualRefreshBtn').disabled,true);
+  assert.equal(app.state.messageOffset,0);
+  assert.equal(app.state.messageSnapshot,null);
   await app.refreshConsoleData(); // Duplicate clicks do not dispatch another batch.
   assert.equal(calls.length,2);
   inventory.resolve({databases:[db('A'),db('B'),db('C')]});await refresh;
@@ -442,4 +445,43 @@ test('empty or invalid calendar responses explain why no file is downloaded', as
     assert.match(h.notices.at(-1).message,notice);
     assert.equal(h.get('btnExportIcs').disabled,false);
   }
+});
+
+test('older message pages reuse the capture boundary; a fresh first page includes arrivals', async () => {
+  const {ctx,app,get}=harness();
+  const urls=[];
+  ctx.request=async url=>{urls.push(url);return {messages:[{text:'stored'}],total:250,snapshot:251,counts:{all:250},has_more:true};};
+  await app.loadMessages();
+  app.state.messageOffset=100;
+  await app.loadMessages();
+  assert.equal(new URLSearchParams(urls[1].split('?')[1]).get('snapshot'),'251');
+  assert.equal(get('messagesPageInfo').textContent,'101–101 / 250 条');
+  app.state.messageOffset=0;
+  await app.loadMessages();
+  assert.equal(new URLSearchParams(urls[2].split('?')[1]).has('snapshot'),false);
+  app.selectDatabase('other');
+  assert.equal(app.state.messageSnapshot,null);
+});
+
+test('typing a message search rejects the old response during the debounce window', async () => {
+  const {ctx,app,get}=harness();
+  const pending=deferred();
+  ctx.request=()=>pending.promise;
+  ctx.clearTimeout=()=>{};
+  let timer;
+  ctx.setTimeout=callback=>{timer=callback;return 1;};
+  const old=app.loadMessages();
+  app.searchMessages('new search');
+  pending.resolve({messages:[{text:'obsolete'}],total:1,counts:{all:1}});
+  await old;
+  assert.equal(app.state.messages.length,0);
+  assert.match(get('messagesLoadStatus').textContent,/等待搜索/);
+  assert.equal(get('btnMessagesNext').disabled,true);
+  ctx.request=async url=>{
+    assert.equal(new URLSearchParams(url.split('?')[1]).get('q'),'new search');
+    return {messages:[{text:'new result'}],total:1,snapshot:5,counts:{all:1}};
+  };
+  await timer();
+  assert.equal(app.state.messages[0].text,'new result');
+  assert.equal(get('messagesPageInfo').textContent,'1–1 / 1 条');
 });

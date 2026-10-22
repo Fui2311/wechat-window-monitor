@@ -2,7 +2,7 @@
 
 本地采集指定微信群的可读消息，识别讲座与学术报告，保留原文，并生成邮件通知与日历文件。提供命令行和浏览器控制台，支持 macOS Accessibility、Windows UIAutomation 和离线 JSONL 输入。
 
-**正式版本：1.1.1 · Python 3.11+ · 核心运行时无第三方 Python 依赖。** 安装包见 [GitHub Releases](https://github.com/Fui2311/wechat_tracking/releases)。
+**正式版本：1.1.2 · Python 3.11+ · 核心运行时无第三方 Python 依赖。** 安装包见 [GitHub Releases](https://github.com/Fui2311/wechat_tracking/releases)。
 
 默认使用本地规则、仅预览邮件；启用 LLM 后才向所配置的兼容接口发送待分析正文，显式启用发信后才投递 SMTP。不会向微信群发送消息或代替用户报名。
 
@@ -36,11 +36,13 @@ Windows PowerShell 用 `python` 创建环境，激活命令为 `.\.venv\Scripts\
 
 `demo` 使用包内合成/人工转写样例，固定走本地规则，写入配置目录下的 `state/demo.sqlite3`、`demo-email-preview.txt` 和 `demo.ics`，不访问微信、LLM 或 SMTP。它验证软件流程，不能证明桌面采集或邮件送达。
 
+首次打开网页默认查看当前活动库；上面的 `demo` 写入独立演示库。请在页头数据源中选择「Demo 演示」，再查看讲座、采集消息及邮件预览；当前活动库为空不代表回放失败。也可直接点击网页「运行 Demo」，完成后会自动选中演示库。
+
 安装 wheel 后可在任意工作目录使用 `wechat-track init` 创建配置；不会覆盖已有文件。下列命令都显式指定配置，避免误用本机另一份安装的配置。
 
 ### macOS 实时部署
 
-推荐下载 Release 中的 `WeChatLectureTracker-macOS-1.1.1.zip`，解压后执行：
+推荐下载 Release 中的 `WeChatLectureTracker-macOS-1.1.2.zip`，解压后执行：
 
 ```bash
 python3 mac/verify-package.py .
@@ -105,6 +107,8 @@ wechat-track --config config.local.toml service start
 前台 `watch` 首次默认只建立可见消息基线，`--include-existing` 才处理已有消息；后台服务模板的 `service.include_existing=true`，首次会分析当前可见消息。请选择符合需要的行为。不要对同一数据库同时运行多个发信进程。
 
 控制台只监听本机 `127.0.0.1:8088`，校验 Host/Origin；关闭控制台不停止独立的监控服务。切换群名时先探测新窗口、停止旧实例并分离数据目录；新群保持停止，需显式点击启动预览。旧群历史保留只读。
+
+采集消息翻到较早页面后会固定本次浏览的入库边界，后台新消息不会把记录挤到下一页造成重复。返回第一页、重新搜索或点击页头刷新可读取最新消息；页头刷新会将采集消息返回第一页。
 
 ### 邮箱与模型
 

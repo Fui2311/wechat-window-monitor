@@ -17,6 +17,7 @@ const state = {
   messageFilter: 'all',
   messageSearch: '',
   messageOffset: 0,
+  messageSnapshot: null,
   messageLimit: 100,
   messageRequest: 0,
   eventsRequest: 0,
@@ -288,6 +289,7 @@ function selectDatabase(path) {
     state.outbox = [];
     state.messages = [];
     state.messageOffset = 0;
+    state.messageSnapshot = null;
     state.currentModalEvent = null;
     for (const id of ['emailPreviewModal', 'eventDetailModal']) closeModal(document.getElementById(id), false);
     for (const id of ['kpiEventsCount', 'tabBadgeEvents', 'countFilterAll', 'kpiOutboxCount', 'tabBadgeOutbox']) {
@@ -432,6 +434,7 @@ async function loadMessages() {
   try {
     const params = new URLSearchParams({ category: state.messageFilter, q: state.messageSearch,
       limit: state.messageLimit, offset: state.messageOffset });
+    if (state.messageOffset > 0 && state.messageSnapshot !== null) params.set('snapshot', state.messageSnapshot);
     if (db) params.set('db', db);
     const data = await apiGet(`/api/messages?${params}`);
     if (request !== state.messageRequest || db !== state.selectedDb || state.isConsoleStopping || state.isConsoleStopped) return;
@@ -440,6 +443,7 @@ async function loadMessages() {
       return loadMessages();
     }
     state.messages = data.messages || [];
+    state.messageSnapshot = data.snapshot ?? null;
     const counts = data.counts || {};
     document.getElementById('tabBadgeMessages').textContent = counts.all || 0;
     document.getElementById('countMessagesAll').textContent = counts.all || 0;
@@ -466,6 +470,19 @@ async function loadMessages() {
     status.textContent = `读取失败：${error.message}。当前内容为上次成功读取的记录，请刷新重试。`;
     reportDataError('采集消息', error);
   }
+}
+
+function searchMessages(value) {
+  // Invalidate the old read immediately, before the debounce launches its replacement.
+  state.messageRequest++;
+  state.messageSearch = value;
+  state.messageOffset = 0;
+  state.messageSnapshot = null;
+  document.getElementById('btnMessagesPrevious').disabled = true;
+  document.getElementById('btnMessagesNext').disabled = true;
+  document.getElementById('messagesLoadStatus').textContent = '正在等待搜索；下方为上次读取的记录…';
+  clearTimeout(state.messageSearchTimer);
+  state.messageSearchTimer = setTimeout(loadMessages, 200);
 }
 
 function renderMessages() {
@@ -1225,6 +1242,10 @@ async function loadConsoleData() {
 async function refreshConsoleData() {
   if (state.isConsoleStopped || state.isConsoleStopping || state.manualRefreshBusy) return;
   state.manualRefreshBusy = true;
+  // An explicit refresh begins a new message view; older pages keep their boundary during polling.
+  state.messageRequest++;
+  state.messageOffset = 0;
+  state.messageSnapshot = null;
   const button = document.getElementById('manualRefreshBtn');
   button.disabled = true;
   for (const key of ['_lastEventsRenderKey', '_lastOutboxRenderKey', '_lastServicesRenderKey', '_lastLogsText']) state[key] = null;
@@ -1463,6 +1484,7 @@ function setupEventListeners() {
     button.onclick = () => {
       state.messageFilter = button.dataset.messageFilter;
       state.messageOffset = 0;
+      state.messageSnapshot = null;
       document.querySelectorAll('[data-message-filter]').forEach(item => {
         const active = item === button;
         item.classList.toggle('active', active);
@@ -1472,10 +1494,7 @@ function setupEventListeners() {
     };
   });
   document.getElementById('messageSearchInput').oninput = event => {
-    state.messageSearch = event.target.value;
-    state.messageOffset = 0;
-    clearTimeout(state.messageSearchTimer);
-    state.messageSearchTimer = setTimeout(loadMessages, 200);
+    searchMessages(event.target.value);
   };
   document.getElementById('btnMessagesPrevious').onclick = () => {
     state.messageOffset = Math.max(0, state.messageOffset - state.messageLimit);
