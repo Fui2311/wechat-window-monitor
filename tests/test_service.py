@@ -54,6 +54,28 @@ class FakeStream:
         self.closed = True
 
 
+def run_fixture(service):
+    """Stop when all fixture frames are processed, independent of disk speed."""
+    factory = service.stream_factory
+    def bounded_stream(settings):
+        stream = factory(settings)
+        read = stream.next_frame
+        def next_frame(timeout=0.5):
+            if not stream.frames:
+                service.stop.set()
+                return None
+            try:
+                return read(timeout)
+            except Exception:
+                if not stream.frames:
+                    service.stop.set()
+                raise
+        stream.next_frame = next_frame
+        return stream
+    service.stream_factory = bounded_stream
+    return service.run(run_seconds=5)
+
+
 class ServiceTests(unittest.TestCase):
     def setUp(self):
         # The screenshot fixture is dated October 15. Keep reminder scheduling
@@ -99,7 +121,7 @@ class ServiceTests(unittest.TestCase):
             (Path(directory) / "tracker.sqlite3").write_bytes(b"broken database" * 100)
             service = MonitorService(config(directory), stream_factory=lambda _: self.fail("must not start capture"))
             with self.assertRaisesRegex(RuntimeError, "Database startup"):
-                service.run(run_seconds=0.1)
+                run_fixture(service)
             self.assertEqual(read_status(config(directory))["status"], "database_error")
             lock = InstanceLock(directory)
             lock.acquire()
@@ -120,7 +142,7 @@ class ServiceTests(unittest.TestCase):
             stream = FakeStream([snapshot(), snapshot()])
             service = MonitorService(config(directory), stream_factory=lambda _: stream)
             with patch("wechat_tracker.engine.send_email", side_effect=AssertionError("SMTP is disabled")):
-                health = service.run(run_seconds=0.1)
+                health = run_fixture(service)
             self.assertTrue(stream.closed)
             self.assertFalse(health["running"])
             self.assertEqual(health["events_created"], 1)
@@ -132,7 +154,7 @@ class ServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             failed = dict(kind="state", result=dict(ok=False, group=GROUP, status="window_not_found"))
             stream = FakeStream([snapshot(), failed, snapshot()])
-            health = MonitorService(config(directory), stream_factory=lambda _: stream).run(run_seconds=0.1)
+            health = run_fixture(MonitorService(config(directory), stream_factory=lambda _: stream))
             self.assertEqual(health["capture_gaps"], 1)
             with StoreContext(Path(directory) / "tracker.sqlite3") as store:
                 gaps = store.db.execute("SELECT * FROM capture_gaps").fetchall()
@@ -175,7 +197,7 @@ class ServiceTests(unittest.TestCase):
                 if not enabled:
                     settings['service']['backup_enabled'] = False
                 stream = FakeStream([snapshot()])
-                health = MonitorService(settings, stream_factory=lambda _: stream).run(run_seconds=0.1)
+                health = run_fixture(MonitorService(settings, stream_factory=lambda _: stream))
                 self.assertEqual((Path(directory) / 'tracker.last-good.sqlite3').exists(), enabled)
                 self.assertEqual(health['backup_at'] is not None, enabled)
                 with StoreContext(Path(directory) / 'tracker.sqlite3') as store:
@@ -185,7 +207,7 @@ class ServiceTests(unittest.TestCase):
     def test_worker_exit_is_observed_and_recovery_scheduled(self):
         with tempfile.TemporaryDirectory() as directory:
             stream = FakeStream([CaptureError("exited")])
-            health = MonitorService(config(directory), stream_factory=lambda _: stream).run(run_seconds=0.1)
+            health = run_fixture(MonitorService(config(directory), stream_factory=lambda _: stream))
             self.assertTrue(stream.closed)
             self.assertEqual(health["worker_restarts"], 1)
             self.assertIsNone(health["worker_pid"])
@@ -195,7 +217,7 @@ class ServiceTests(unittest.TestCase):
             frame = snapshot()
             frame["result"]["group"] = "another group"
             stream = FakeStream([frame])
-            health = MonitorService(config(directory), stream_factory=lambda _: stream).run(run_seconds=0.1)
+            health = run_fixture(MonitorService(config(directory), stream_factory=lambda _: stream))
             self.assertEqual(health["worker_restarts"], 1)
             with StoreContext(Path(directory) / "tracker.sqlite3") as store:
                 self.assertEqual(store.events(), [])
@@ -206,7 +228,7 @@ class ServiceTests(unittest.TestCase):
             heartbeat = dict(kind="heartbeat", group=GROUP, observed_at=frame["result"]["observed_at"], diagnostics={})
             stream = FakeStream([frame, heartbeat])
             with patch("wechat_tracker.service.enrich_forwards", side_effect=lambda messages, *a, **k: (messages, [])) as enrich:
-                MonitorService(config(directory), stream_factory=lambda _: stream).run(run_seconds=0.1)
+                run_fixture(MonitorService(config(directory), stream_factory=lambda _: stream))
             self.assertEqual(enrich.call_count, 2)
 
     def test_deferred_tail_does_not_analyze_history_and_ready_heartbeat_resumes(self):
@@ -225,7 +247,7 @@ class ServiceTests(unittest.TestCase):
                                        diagnostics={"tail_follow": {"action": "unchanged_recovered_viewport"}}))
                 service = MonitorService(options, stream_factory=lambda _: FakeStream(frames))
                 with patch("wechat_tracker.macos.normalize_snapshot", return_value=messages):
-                    service.run(run_seconds=0.5)
+                    run_fixture(service)
                 with StoreContext(Path(directory) / "tracker.sqlite3") as store:
                     self.assertEqual(len(store.events()), int(resume))
                     self.assertEqual(len(store.jobs()), int(resume))
@@ -263,7 +285,7 @@ class ServiceTests(unittest.TestCase):
             stream = FakeStream([snapshot()])
             service = MonitorService(config(directory), send=True, stream_factory=lambda _: stream)
             with patch("wechat_tracker.credentials.apply_credentials", return_value=False), patch("wechat_tracker.engine.send_email") as send:
-                health = service.run(run_seconds=0.1)
+                health = run_fixture(service)
             send.assert_not_called()
             self.assertFalse(health["send_ready"])
             with StoreContext(Path(directory) / "tracker.sqlite3") as store:
@@ -272,7 +294,7 @@ class ServiceTests(unittest.TestCase):
     def test_restart_persists_deduplication_and_gap_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             for _ in range(2):
-                MonitorService(config(directory), stream_factory=lambda _: FakeStream([snapshot()])).run(run_seconds=0.05)
+                run_fixture(MonitorService(config(directory), stream_factory=lambda _: FakeStream([snapshot()])))
             with StoreContext(Path(directory) / "tracker.sqlite3") as store:
                 self.assertEqual(len(store.events()), 1)
                 self.assertEqual(len(store.jobs()), 1)
