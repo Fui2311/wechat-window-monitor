@@ -43,63 +43,13 @@ const state = {
   consoleStoppedAt: null,
 };
 
-// Utilities
-const dateFormatters = new Map();
-
-function dateParts(isoString) {
-  if (!isoString) return null;
-  try {
-    const date = new Date(isoString);
-    if (isNaN(date.getTime())) return null;
-    const zone = state.config.timezone || 'Asia/Shanghai';
-    if (!dateFormatters.has(zone)) dateFormatters.set(zone, new Intl.DateTimeFormat('en-GB', {
-      timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
-    }));
-    return Object.fromEntries(dateFormatters.get(zone).formatToParts(date).map(part => [part.type, part.value]));
-  } catch (error) {
-    return null;
-  }
-}
-
-function formatTime(isoString) {
-  const parts = dateParts(isoString);
-  return parts ? `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}` : '';
-}
-
-function displayEventTime(isoString, rawText) {
-  const formatted = formatTime(isoString);
-  if (formatted) return formatted;
-  if (rawText && String(rawText).trim()) return String(rawText).trim();
-  return '未注明';
-}
-
-function signupLinkHtml(value) {
-  if (!value) return '未提供';
-  try {
-    const url = new URL(String(value));
-    if (!['http:', 'https:'].includes(url.protocol)) return '未提供';
-    return `<a href="${escapeHtml(url.href)}" target="_blank" rel="noopener noreferrer">打开报名链接</a>`;
-  } catch (error) {
-    return '未提供';
-  }
-}
-
-function formatClockTime(isoString) {
-  if (!isoString) return '--';
-  const parts = dateParts(isoString);
-  return parts ? `${parts.hour}:${parts.minute}:${parts.second}` : String(isoString);
-}
-
-function escapeHtml(text) {
-  if (text == null) return '';
-  return String(text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
+// Explicit browser adapters; rules themselves are independently testable.
+const {escapeHtml, signupLinkHtml, serviceStatusView} = TrackerPresentation;
+const {get: apiGet, post: apiPost, text: apiText} = TrackerHttp.createApi((...args) => fetch(...args));
+function formatTime(value) { return TrackerPresentation.formatTime(value, state.config.timezone); }
+function formatClockTime(value) { return TrackerPresentation.formatClockTime(value, state.config.timezone); }
+function formatCaptureTime(value) { return TrackerPresentation.formatCaptureTime(value, state.config.timezone); }
+function displayEventTime(value, raw) { return TrackerPresentation.displayEventTime(value, raw, state.config.timezone); }
 
 function reportDataError(section, error) {
   if (state.isConsoleStopping || state.isConsoleStopped) return;
@@ -176,50 +126,6 @@ function showConfirm(title, message, onConfirm) {
   };
   cancelBtn.onclick = cleanup;
   openModal('confirmModal', 'confirmModalCancelBtn');
-}
-
-// API Calls
-async function apiGet(endpoint) {
-  const res = await fetch(endpoint);
-  if (!res.ok) {
-    const text = await res.text();
-    let errMsg = text || `HTTP ${res.status}`;
-    try {
-      const errJson = JSON.parse(text);
-      if (errJson && errJson.error) errMsg = errJson.error;
-    } catch (e) {}
-    throw new Error(errMsg);
-  }
-  return await res.json();
-}
-
-async function apiPost(endpoint, body = {}) {
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    let errMsg = text || `HTTP ${res.status}`;
-    try {
-      const errJson = JSON.parse(text);
-      if (errJson && errJson.error) errMsg = errJson.error;
-    } catch (e) {}
-    throw new Error(errMsg);
-  }
-  return await res.json();
-}
-
-function serviceStatusView(service) {
-  if (service.status === 'database_error') return {label:'数据库异常', summary:'数据库异常', level:'danger', color:'red'};
-  if (!service.running) return service.status === 'stopped_or_unresponsive'
-    ? {label:'停止或无响应', summary:'状态待核对', level:'danger', color:'red'}
-    : {label:'服务未启动', summary:'已停止', level:'danger', color:'red'};
-  if (service.status === 'monitoring') return {label:'监控中', summary:'监控运行中', level:'success', color:'green'};
-  if (service.status === 'waiting_for_weixin') return {label:'等待微信窗口', summary:'等待微信', level:'warning', color:'amber'};
-  if (service.status === 'starting') return {label:'服务启动中', summary:'启动中', level:'warning', color:'amber'};
-  return {label:'采集待确认', summary:'运行待核对', level:'warning', color:'amber'};
 }
 
 // Status & Dashboard updater
@@ -485,11 +391,6 @@ async function loadEvents() {
     console.error('Failed to load events:', err);
     reportDataError('讲座数据', err);
   }
-}
-
-function formatCaptureTime(value) {
-  const parts = dateParts(value);
-  return parts ? `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}` : '未记录';
 }
 
 function nestedMessageText(message, depth = 0) {
@@ -1355,17 +1256,11 @@ async function exportCalendar() {
   button.disabled = true;
   showToast('正在生成所选数据源的日历…', 'info');
   try {
-    const response = await fetch(db ? `/api/calendar/export?db=${encodeURIComponent(db)}` : '/api/calendar/export');
-    const content = await response.text();
+    const content = await apiText(db ? `/api/calendar/export?db=${encodeURIComponent(db)}` : '/api/calendar/export');
     if (state.isConsoleStopped || state.isConsoleStopping) return;
     if (request !== state.calendarRequest || db !== state.selectedDb) {
       showToast('数据源已变更，请核对后重新导出日历', 'warning');
       return;
-    }
-    if (!response.ok) {
-      let message = content || `HTTP ${response.status}`;
-      try { message = JSON.parse(content).error || message; } catch (error) {}
-      throw new Error(message);
     }
     if (!content.startsWith('BEGIN:VCALENDAR')) throw new Error('后台未返回有效日历，请检查后重试');
     const count = (content.match(/^BEGIN:VEVENT\r?$/gm) || []).length;

@@ -1,4 +1,4 @@
-# 部署、升级与发布（1.0.5）
+# 部署、升级与发布（1.1.0）
 
 ## 部署选择
 
@@ -59,7 +59,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m wechat_tracker --config config.local.toml web --open
 ```
 
-从 wheel 安装时将 `pip install .` 换为 `pip install 路径\wechat_lecture_tracker-1.0.5-py3-none-any.whl`。当前用户登录任务要使用创建时的 Python 路径；不要安装后移动或删除虚拟环境。需保持微信在线及目标独立群窗口可读，注销/锁屏不能视作可靠采集环境。更多细节见 [服务说明](service.md)。
+从 wheel 安装时将 `pip install .` 换为 `pip install 路径\wechat_lecture_tracker-1.1.0-py3-none-any.whl`。当前用户登录任务要使用创建时的 Python 路径；不要安装后移动或删除虚拟环境。需保持微信在线及目标独立群窗口可读，注销/锁屏不能视作可靠采集环境。更多细节见 [服务说明](service.md)。
 
 ## 邮箱和 LLM
 
@@ -95,5 +95,7 @@ wechat-track --config config.local.toml rebuild-analysis
 | 通知存在但没收到邮件 | 核对预览/发信模式、凭据授权、队列状态和退避时间；SMTP 接受不等于进入收件箱 |
 | 端口被占用 | 保留已有控制台或使用 `web --port 8089`；不要杀死所有 Python 进程 |
 | 转发只有摘要 | 查看是否实际展开、父卡片来源绑定和 `children`；摘要/附件名不能当正文 |
+
+开发发布请使用完整 Git 仓库。修改 `pyproject.toml` 的稳定版本号后，运行 `python scripts/sync-version.py --write`，审查差异，并先执行 `python scripts/sync-version.py --check`；该工具同步当前组件和文档标签，不改历史变更记录。Mac ZIP 的文件清单按安装用途提供，开发脚本需从完整仓库取得。
 
 发布验收由 `ruff`、全量测试、wheel 安装后冒烟验证、源码包重建和 Mac ZIP 清单检查组成。原生编译与实际桌面采集分开记录；目标机器还需实测新消息、重复轮询、窗口恢复、重启和所选邮箱投递。只在测试群进行主动转发和恢复实验，不用测试结果承诺全历史完整。

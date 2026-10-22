@@ -1,4 +1,4 @@
-# 架构与扩展契约（1.0.0）
+# 架构与扩展契约（1.1.0）
 
 本项目围绕“指定群的捕获证据 → 通知记录 → 可审计投递”组织代码。部署入口负责选择平台，业务用例通过接口调用存储、处理器和发信器。模块划分见根目录 README。
 
@@ -18,7 +18,10 @@ flowchart LR
   Dispatch --> Render[纯文本 / HTML 格式化]
   Dispatch --> Sender[MailSender 接口]
   Sender --> SMTP[SMTP / TLS]
-  HTTP[本机 HTTP 控制台] --> Queries[只读查询与状态投影]
+  Browser[app.js 页面状态与 DOM] --> ViewRules[presentation.js 纯显示规则]
+  Browser --> Client[http.js 注入请求函数]
+  Client --> HTTP[本机 HTTP 控制台]
+  HTTP --> Queries[只读查询与状态投影]
   Queries --> SQLite
   HTTP --> Control[服务 / 配置控制接口]
 ```
@@ -34,6 +37,16 @@ flowchart LR
 - `engine.Engine` 是组合根，装配默认适配器，保留 `Engine(store, config)` 调用形式。平台采集、常驻服务和命令行仍使用这一入口。
 
 依赖边界通过 `tests/test_application_boundaries.py` 检查，并用独立内存仓储执行入库及事务回滚，防止“只换目录、仍依赖 SQLite 全局对象”的回退。
+
+## 浏览器模块接口
+
+`resources/web/presentation.js` 导出不可变的 `TrackerPresentation` 接口，接收消息、服务状态和显式时区，负责日期格式化、原始时间保留、HTML 转义、安全报名链接及监控状态投影。它不访问 DOM、存储、网络或控制器状态；格式器缓存只属于模块内部。
+
+`resources/web/http.js` 导出 `TrackerHttp.createApi(fetchResponse)`。调用方注入请求函数，得到 JSON GET、JSON POST 和文本 GET 三种操作；统一提取 HTTP 错误，原样传播网络失败。加载模块不会发起请求。浏览器注入原生 fetch，测试注入假传输。
+
+`app.js` 是浏览器组合根与交互控制器，管理数据源、草稿、请求序号、弹窗和 DOM。它从明确的模块接口获得格式化与传输能力，时区包装函数读取当前管理配置后显式传参。页面依次加载 presentation.js、http.js、app.js；服务器仅向闭合白名单提供静态文件，不根据任意用户路径加载模块。源码包、wheel 和 Mac ZIP 都包含这些资源，安装后冒烟逐一请求并验证。
+
+纯模块同时提供 CommonJS 导出供 Node 22+ 测试；产品运行仍直接使用普通浏览器脚本，不引入 npm、打包器或第三方运行依赖。交互回归使用同一真实 HTTP 适配器注入假 fetch，验证状态隔离、错误恢复和下载行为。模块契约测试在没有 DOM、存储和网络全局对象的环境中运行。
 
 ## 消息与事务
 

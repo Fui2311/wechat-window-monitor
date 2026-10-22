@@ -80,7 +80,7 @@ def build_launcher(
         "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleName": "讲座消息控制台",
         "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "1.0.5",
+        "CFBundleShortVersionString": "1.1.0",
         "CFBundleVersion": "1",
         "LSMinimumSystemVersion": "12.0",
         "LSUIElement": True,
