@@ -32,6 +32,8 @@ class SendEmailTests(unittest.TestCase):
             "TRACKER_EMAIL_FROM": "sender@example.com",
             "TRACKER_EMAIL_TO": "one@example.com, two@example.com",
         }
+        # Windows OpenSSL requires these to locate its system providers.
+        self.environment.update({key: os.environ[key] for key in ("SYSTEMROOT", "WINDIR") if key in os.environ})
         self.env_patch = patch.dict(os.environ, self.environment, clear=True)
         self.env_patch.start()
         self.addCleanup(self.env_patch.stop)

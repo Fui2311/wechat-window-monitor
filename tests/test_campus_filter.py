@@ -91,14 +91,14 @@ class CampusFilterTests(unittest.TestCase):
             self.assertEqual([e["source_message_id"] for e in extract_llm(forward, {"llm_model": "test"})], expected)
 
     def test_filtered_source_is_stored_without_event_or_mail_job(self):
+        from contextlib import closing
         with tempfile.TemporaryDirectory() as temp:
-            store = Store(Path(temp) / "test.sqlite3")
-            self.addCleanup(store.close)
-            engine = Engine(store, {"group": "测试群"})
-            self.assertEqual(engine.ingest(message("讲座地点：佛山校区"))["events"], [])
-            self.assertEqual(store.db.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
-            self.assertEqual(store.events(), [])
-            self.assertEqual(store.jobs(), [])
+            with closing(Store(Path(temp) / "test.sqlite3")) as store:
+                engine = Engine(store, {"group": "测试群"})
+                self.assertEqual(engine.ingest(message("讲座地点：佛山校区"))["events"], [])
+                self.assertEqual(store.db.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
+                self.assertEqual(store.events(), [])
+                self.assertEqual(store.jobs(), [])
 
 
 if __name__ == "__main__":

@@ -14,6 +14,11 @@ class Result:
 
 
 class StartupTests(unittest.TestCase):
+    def setUp(self):
+        uid = patch("wechat_tracker.autostart.os.getuid", return_value=501, create=True)
+        uid.start()
+        self.addCleanup(uid.stop)
+
     def test_mac_bootout_accepts_an_already_removed_job(self):
         with patch("wechat_tracker.autostart._run", side_effect=[
             Result(3, error=b"Boot-out failed: 3: No such process"), Result(113)

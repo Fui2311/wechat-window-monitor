@@ -9,6 +9,7 @@ env:
   PYTHONUTF8: '1'
 jobs:
   test:
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -31,6 +32,7 @@ jobs:
           name: packages-${{ matrix.os }}-py${{ matrix.python }}
           path: dist/*
   native:
+    timeout-minutes: 10
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4

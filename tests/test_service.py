@@ -225,7 +225,7 @@ class ServiceTests(unittest.TestCase):
                                        diagnostics={"tail_follow": {"action": "unchanged_recovered_viewport"}}))
                 service = MonitorService(options, stream_factory=lambda _: FakeStream(frames))
                 with patch("wechat_tracker.macos.normalize_snapshot", return_value=messages):
-                    service.run(run_seconds=0.05)
+                    service.run(run_seconds=0.5)
                 with StoreContext(Path(directory) / "tracker.sqlite3") as store:
                     self.assertEqual(len(store.events()), int(resume))
                     self.assertEqual(len(store.jobs()), int(resume))

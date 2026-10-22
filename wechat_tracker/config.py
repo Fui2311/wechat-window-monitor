@@ -120,7 +120,9 @@ def update_toml_root_keys(config_path: Path | str, updates: dict[str, object]) -
                 matched_key = k
                 indent = m.group(1)
                 key_str = m.group(2)
-                rest = m.group(4)
+                # Regex '$' stops before LF, leaving CR from a Windows CRLF.
+                # Do not preserve that CR as part of an inline comment.
+                rest = m.group(4).rstrip("\r\n")
                 val_repr = _format_toml_val(updates[k])
                 comment_match = re.search(r"(\s*#.*)$", rest)
                 comment_part = comment_match.group(1) if comment_match else newline

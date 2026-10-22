@@ -1,6 +1,7 @@
 """Stored capture evidence is readable without changing capture or mail state."""
 
 from datetime import datetime
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -132,8 +133,9 @@ class CapturedMessagesTests(unittest.TestCase):
 
     def test_selected_history_with_no_capture_tables_and_missing_active_db(self):
         legacy = self.root / "legacy.sqlite3"
-        with sqlite3.connect(legacy) as connection:
+        with closing(sqlite3.connect(legacy)) as connection:
             connection.execute("CREATE TABLE unrelated(value TEXT)")
+            connection.commit()
         _, data = self.get(db=str(legacy))
         self.assertEqual(data["messages"], [])
         self.assertIsNone(data["last_success_at"])

@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import time
 
 from .notify import _mailboxes, send_email
 
@@ -138,7 +139,11 @@ def authorize_credentials(config):
     _keychain(config, "credential-authorize")
     # Wake the running service's cached failure without exposing values to the
     # web server or writing any password to disk.
-    marker.touch()
+    previous = marker.stat()
+    changed_at = max(time.time_ns(), previous.st_mtime_ns + 1_000_000)
+    os.utime(marker, ns=(previous.st_atime_ns, changed_at))
+    with _MAC_CREDENTIAL_LOCK:
+        _MAC_CREDENTIAL_CACHE.pop((os.getpid(), str(marker.resolve()), config["group"]), None)
     return {"configured": True, "smtp_sent": False}
 
 
