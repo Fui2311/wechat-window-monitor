@@ -123,6 +123,19 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 if action == "generate" and mutation:
                     return self.send_json(dict(ok=True, rule=app.generate(identity)))
+                if action == "rule-prompt" and not mutation:
+                    return self.send_json(
+                        dict(ok=True, **app.export_rule_prompt(identity))
+                    )
+                if action == "import-rule" and mutation:
+                    return self.send_json(
+                        dict(
+                            ok=True,
+                            rule=app.import_rule(
+                                identity, body["content"], body["revision"]
+                            ),
+                        )
+                    )
                 if action == "activate" and mutation:
                     return self.send_json(
                         dict(ok=True, window=app.activate(identity, body["rule_id"]))

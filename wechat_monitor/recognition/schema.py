@@ -33,6 +33,7 @@ def validate_rule(value, *, mode=None, target=None):
     if (
         type(value["schema_version"]) is not int
         or value["schema_version"] != 1
+        or not isinstance(value["mode"], str)
         or value["mode"] not in MODES
     ):
         raise ValueError("不支持的规则版本或识别模式")
@@ -53,7 +54,12 @@ def validate_rule(value, *, mode=None, target=None):
         for clause in clauses:
             if not isinstance(clause, dict) or set(clause) != {"field", "op", "value"}:
                 raise ValueError("每个条件须为 field / op / value")
-            if clause["field"] not in FIELDS or clause["op"] not in OPS:
+            if (
+                not isinstance(clause["field"], str)
+                or clause["field"] not in FIELDS
+                or not isinstance(clause["op"], str)
+                or clause["op"] not in OPS
+            ):
                 raise ValueError("不支持的条件字段或运算符")
             text(clause["value"], "条件值", 500)
     if value["mode"] == "local" and not (match["any"] or match["all"]):

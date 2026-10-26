@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from "vue";
 import { useRequests } from "../lib/scope";
 import { endpoint } from "../lib/api";
 import Hint from "./Hint.vue";
+import RuleExchangeDialog from "./RuleExchangeDialog.vue";
 const props = defineProps({ window: Object });
 const emit = defineEmits(["refresh"]);
 const request = useRequests();
@@ -13,7 +14,8 @@ const rules = ref([]),
   error = ref(""),
   notice = ref(""),
   testText = ref(""),
-  result = ref(null);
+  result = ref(null),
+  exchange = ref(null);
 const current = computed(() =>
   rules.value.find((x) => x.id === selected.value),
 );
@@ -51,7 +53,13 @@ async function run(action) {
   error.value = "";
   notice.value = "";
   try {
-    if (action === "generate") {
+    if (action === "export") {
+      const d = await request(endpoint(props.window.id, "rule-prompt"));
+      exchange.value = {
+        prompt: d.prompt,
+        window: { ...props.window, revision: d.revision },
+      };
+    } else if (action === "generate") {
       const d = await request(endpoint(props.window.id, "generate"), {});
       await load(d.rule.id);
       notice.value = "草稿已保存。核对并试测后，点击启用此版本。";
@@ -89,6 +97,21 @@ async function run(action) {
     busy.value = false;
   }
 }
+async function imported(rule) {
+  exchange.value = null;
+  busy.value = true;
+  error.value = "";
+  notice.value =
+    "导入已保存为新草稿。请核对规则、用示例消息试测，再点击启用此版本。";
+  try {
+    await load(rule.id);
+  } catch (e) {
+    if (e.name !== "AbortError")
+      error.value = `草稿已保存，列表刷新失败：${e.message}`;
+  } finally {
+    busy.value = false;
+  }
+}
 </script>
 <template>
   <section class="panel">
@@ -111,6 +134,22 @@ async function run(action) {
         text="生成会把识别目标发送给模型；语义试测和识别会发送对应正文。本地试测与日常匹配不联网。"
       />
     </p>
+    <div v-if="window.mode === 'local'" class="offline-exchange">
+      <p class="muted">
+        没有 API 也可配置：导出提示词 → 网页 AI 生成 → 粘贴导入 → 试测并启用。
+      </p>
+      <div class="actions">
+        <button :disabled="busy" @click="run('export')">
+          导出提示词并复制
+        </button>
+        <button
+          :disabled="busy || (current && dirty)"
+          @click="exchange = { window: { ...window } }"
+        >
+          导入网页 AI 结果
+        </button>
+      </div>
+    </div>
     <p v-if="notice" class="notice" role="status">{{ notice }}</p>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <div v-if="rules.length" class="rule-grid">
@@ -123,7 +162,12 @@ async function run(action) {
           >
             <option v-for="r in rules" :key="r.id" :value="r.id">
               v{{ r.version }} ·
-              {{ r.origin === "llm" ? "模型生成" : "手动编辑"
+              {{
+                r.origin === "llm"
+                  ? "模型生成"
+                  : r.origin === "imported"
+                    ? "网页 AI 导入"
+                    : "手动编辑"
               }}{{ r.id === window.active_rule ? " · 当前启用" : "" }}
             </option>
           </select></label
@@ -192,7 +236,20 @@ async function run(action) {
     <div v-else class="empty-state">
       <span>✧</span>
       <h3>还没有识别规则</h3>
-      <p>先在模型设置填写兼容接口与模型，再点击生成。生成结果仅为草稿。</p>
+      <p v-if="window.mode === 'local'">
+        可导出提示词交给网页版 AI，再粘贴导入；也可配置 API
+        后调用模型生成。结果均为草稿，试测并启用后生效。
+      </p>
+      <p v-else>
+        先在模型设置填写兼容接口与模型，再点击生成。生成结果仅为草稿。
+      </p>
     </div>
+    <RuleExchangeDialog
+      v-if="exchange"
+      :window="exchange.window"
+      :prompt="exchange.prompt"
+      @close="exchange = null"
+      @imported="imported"
+    />
   </section>
 </template>

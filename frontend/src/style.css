@@ -421,6 +421,15 @@ p {
 .actions button {
   font-size: 12px;
 }
+.offline-exchange {
+  border: 1px solid #e2e7f0;
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 18px 0;
+}
+.offline-exchange p {
+  margin-top: 0;
+}
 .muted {
   color: #97a3b6;
   font-size: 12px;

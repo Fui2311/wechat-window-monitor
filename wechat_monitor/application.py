@@ -8,6 +8,7 @@ from .model import ModelSettings, ChatClient
 from .runtime import Runtime
 from .recognition import RuleGenerator, LocalCore, SemanticCore
 from .recognition.schema import validate_rule
+from .recognition.exchange import local_prompt, parse_local_rule
 from wechat_tracker.domain.messages import validate_message
 
 
@@ -59,6 +60,25 @@ class Application:
             if any(current[k] != window[k] for k in ("target", "mode", "revision")):
                 raise ValueError("生成期间配置已变化，请按最新目标重新生成")
             return self.repo.save_rule(identity, spec)
+
+    def export_rule_prompt(self, identity):
+        with self.lock:
+            window = self.require_window(identity)
+            if window["mode"] != "local":
+                raise ValueError("网页AI导出与导入仅支持本地匹配模式")
+            return dict(
+                prompt=local_prompt(window["target"]), revision=window["revision"]
+            )
+
+    def import_rule(self, identity, content, revision):
+        with self.lock:
+            window = self.require_window(identity)
+            if window["mode"] != "local":
+                raise ValueError("网页AI导出与导入仅支持本地匹配模式")
+            if type(revision) is not int or revision != window["revision"]:
+                raise ValueError("窗口配置已变化，请刷新并按当前目标重新导出、导入")
+            spec = parse_local_rule(content, window["target"])
+            return self.repo.save_rule(identity, spec, "imported")
 
     def save_rule(self, identity, spec):
         with self.lock:

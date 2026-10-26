@@ -64,7 +64,7 @@ async function create() {
       ><label
         >你希望关注什么
         <Hint
-          text="描述要提醒的内容与排除条件。下一步会按此目标调用一次模型生成规则。"
+          text="描述要提醒的内容与排除条件。本地模式可用 API 生成，也可导出提示词交给网页 AI 后导入规则。"
         /><textarea
           v-model="form.target"
           required
@@ -91,7 +91,7 @@ async function create() {
         /></label>
       </details>
       <p class="notice quiet">
-        创建后保持停止。配置模型、生成规则并启用后，可手动开始监控。
+        创建后保持停止。生成或导入规则并启用后，可手动开始监控。语义模式需配置模型。
       </p>
       <p v-if="error" role="alert" class="error">{{ error }}</p>
       <footer>

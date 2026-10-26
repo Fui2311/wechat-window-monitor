@@ -34,6 +34,8 @@
 | /api/windows/:id | POST，保存完整配置与revision；拒绝过期或运行中修改 |
 | /api/windows/:id/rules | GET全部版本；POST {spec}保存编辑的新版本 |
 | /api/windows/:id/generate | POST {}，调用一次模型生成并保存草稿 |
+| /api/windows/:id/rule-prompt | GET，仅local；返回prompt与当前revision，不调用模型、不保存规则 |
+| /api/windows/:id/import-rule | POST {content,revision}，仅local；导入完整JSON或单个JSON代码块，保存origin=imported的新草稿；不启用、不启动 |
 | /api/windows/:id/activate | POST {rule_id}，明确启用版本，运行时拒绝变更 |
 | /api/windows/:id/test | POST {spec,message}，无持久化识别测试；语义模式会调用模型 |
 | /api/windows/:id/probe | POST {}，只读精确窗口就绪检查 |
@@ -43,6 +45,8 @@
 | /api/windows/:id/records | GET，limit=1..100、before正整数游标、q文本、category=all/matched/error |
 
 捕获配置允许source=macos_ax/windows_uia/jsonl、mac_helper、jsonl_path、mac_header_identifier、mac_list_identifier和process_name。其余字段拒绝保存，避免界面显示保存成功但底层实际忽略配置。
+
+导入 content 最多100000字符，同时受请求正文256KB上限约束。必须符合完整 schema v1，模式与当前窗口目标一致；拒绝重复JSON字段、NaN/Infinity、解释文字、代码、额外字段及空正向条件。revision 必须为当前窗口的整数版本，过期则返回400且不写规则库。成功后使用已有 test / activate 接口试测并明确启用。导出只包含目标、规则格式与约束，不读取模型设置或聊天记录；剪贴板由前端写入，失败时保留可手动复制的文本。
 
 状态：starting/monitoring/waiting/recognition_error/stopping/stopped。只有running=true且monitoring为绿点。状态不可用时灰点且显示连接异常，不能用旧缓存声称当前监控正常。停止等待中仍运行，设置保存保持禁用。
 
