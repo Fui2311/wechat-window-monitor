@@ -159,6 +159,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(
                         dict(ok=True, retried=app.repo.retry(identity))
                     )
+                if action == "read-forward" and mutation:
+                    window = app.require_window(identity)
+                    if not window["capture"].get("auto_expand_forward"):
+                        raise ValueError("请先在窗口设置开启自动读取转发正文")
+                    if type(body.get("message_id")) is not int:
+                        raise ValueError("记录编号无效")
+                    app.repo.retry_forward(identity, body["message_id"])
+                    return self.send_json(dict(ok=True))
                 if action == "records" and not mutation:
                     limit = int(query.get("limit", ["50"])[0])
                     before = int(query["before"][0]) if "before" in query else None

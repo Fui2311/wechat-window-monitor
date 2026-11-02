@@ -172,6 +172,29 @@ CREATE INDEX IF NOT EXISTS messages_window ON messages(window_id, id DESC);
                 )
             ]
 
+    def save_forward_body(self, identity, message_id, payload):
+        window = self.window(identity)
+        validate_message(payload, window["name"])
+        with self.connect() as db:
+            # Retain the original fingerprint: later card snapshots must not replay this body.
+            db.execute(
+                "UPDATE messages SET payload=? WHERE window_id=? AND id=?",
+                (encode(payload), identity, message_id),
+            )
+
+    def retry_forward(self, identity, message_id):
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT payload FROM messages WHERE window_id=? AND id=?",
+                (identity, message_id),
+            ).fetchone()
+            if row is None or json.loads(row["payload"]).get("kind") != "forward":
+                raise ValueError("转发记录不存在")
+            db.execute(
+                "UPDATE messages SET state='pending',result=NULL,error='' WHERE window_id=? AND id=?",
+                (identity, message_id),
+            )
+
     def finish(self, identity, message_id, rule_id, result=None, error=""):
         with self.connect() as db:
             db.execute(

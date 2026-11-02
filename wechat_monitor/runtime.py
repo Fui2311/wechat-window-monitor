@@ -3,6 +3,20 @@
 import threading
 from .recognition import LocalCore, SemanticCore
 from .repository import now
+from .recognition.schema import evidence_text
+
+
+class ForwardBodyUnavailable(ValueError):
+    pass
+
+
+def recognition_message(message):
+    """Unread nested card previews are not evidence; retain originals in storage."""
+    value = dict(message)
+    if value.get("kind") == "forward":
+        value["text"] = ""
+    value["children"] = [recognition_message(c) for c in value.get("children", [])]
+    return value
 
 
 class Runtime:
@@ -106,15 +120,43 @@ class Runtime:
             if stop and stop.is_set():
                 break
             try:
-                result = core.recognize(item["payload"], rule["spec"])
+                message = item["payload"]
+                if message.get("kind") == "forward":
+                    if not message.get("children"):
+                        if not window["capture"].get("auto_expand_forward", False):
+                            raise ForwardBodyUnavailable(
+                                "转发正文未读取：请在窗口设置启用自动读取，显示卡片后重试"
+                            )
+                        try:
+                            with self.capture_lock:
+                                if stop and stop.is_set():
+                                    break
+                                message = self.capture.expand(window, message)
+                            if not message.get("children"):
+                                raise ValueError()
+                            self.repository.save_forward_body(
+                                window["id"], item["id"], message
+                            )
+                        except Exception:
+                            raise ForwardBodyUnavailable(
+                                "转发正文读取失败：请显示原卡片，等待空闲后重试；标题未参与识别"
+                            ) from None
+                    message = recognition_message(message)
+                    if not evidence_text(message).strip():
+                        raise ForwardBodyUnavailable(
+                            "转发内尚无可读正文；嵌套转发标题不参与识别"
+                        )
+                result = core.recognize(message, rule["spec"])
                 self.repository.finish(window["id"], item["id"], rule["id"], result)
-            except Exception:
+            except Exception as exc:
                 errors += 1
                 self.repository.finish(
                     window["id"],
                     item["id"],
                     rule["id"],
-                    error="识别失败：请检查模型设置或规则；原文保留，可重试",
+                    error=str(exc)
+                    if isinstance(exc, ForwardBodyUnavailable)
+                    else "识别失败：请检查模型设置或规则；原文保留，可重试",
                 )
         if errors:
             self._set(

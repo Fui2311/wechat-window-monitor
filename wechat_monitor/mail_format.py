@@ -27,6 +27,18 @@ def format_match_mail(window, payload, result, *, received_at=None, record_id=No
     observed = display_time(payload.get("observed_at") or received_at)
     sender = payload.get("sender") or "未读取"
     original = evidence_text(payload) or "（无可读正文）"
+    if payload.get("kind") == "forward" and payload.get("children"):
+        parts = []
+        for index, child in enumerate(payload["children"], 1):
+            content = evidence_text(child)
+            if child.get("kind") == "forward" and not child.get("children"):
+                content = "嵌套转发正文尚未读取"
+            parts.append(
+                f"【转发内第{index}条】\n发送者：{child.get('sender') or '未读取'}\n发送时间：{display_time(child.get('sent_at'))}\n{content}"
+            )
+        original = "\n\n".join(parts)
+        if payload.get("incomplete"):
+            original += "\n\n读取范围：仅包含已加载可访问的消息，完整历史未证明。"
     reason = result.get("reason") or "符合当前识别目标"
     evidence = result.get("evidence") or ""
     subject = "[微信提醒] " + " ".join(source.split())[:80]

@@ -72,6 +72,16 @@ async function retry() {
     if (e.name !== "AbortError") error.value = e.message;
   }
 }
+async function readForward(record) {
+  try {
+    await request(endpoint(props.window.id, "read-forward"), {
+      message_id: record.id,
+    });
+    load(true);
+  } catch (e) {
+    if (e.name !== "AbortError") error.value = e.message;
+  }
+}
 watch(category, () => load(true));
 onMounted(() => {
   load();
@@ -138,6 +148,41 @@ const stateName = (s) =>
         ><small>{{ timeLabel(record.received_at) }}</small>
       </div>
       <p class="record-text">{{ bodyText(record.payload) }}</p>
+      <div v-if="record.payload.kind === 'forward'">
+        <p class="notice" v-if="!record.payload.children?.length">
+          仅有转发卡片标题，正文尚未读取。
+        </p>
+        <button
+          v-if="!record.payload.children?.length"
+          @click="readForward(record)"
+        >
+          读取转发正文（开始监控后执行）
+        </button>
+        <details v-else open>
+          <summary>
+            转发内消息 · 已读取 {{ record.payload.children.length }} 条
+          </summary>
+          <p class="muted" v-if="record.payload.incomplete">
+            仅包含已加载的可访问消息，完整历史未证明；嵌套卡片、图片及未读取附件正文不作为已读证据。
+          </p>
+          <article
+            v-for="(child, index) in record.payload.children"
+            :key="child.id || index"
+            class="record"
+          >
+            <strong
+              >{{ index + 1 }} · {{ child.sender || "发送者未读取" }}</strong
+            >
+            <small>
+              ·
+              {{
+                child.sent_at ? timeLabel(child.sent_at) : "发送时间未读取"
+              }}</small
+            >
+            <p class="record-text">{{ bodyText(child) }}</p>
+          </article>
+        </details>
+      </div>
       <div v-if="record.result" class="result-reason">
         {{ record.result.reason
         }}<small

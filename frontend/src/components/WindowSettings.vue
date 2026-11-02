@@ -87,7 +87,29 @@ async function save() {
             v-model="form.capture.jsonl_path"
             required
             placeholder="/完整路径/messages.jsonl" /></label
-        ><label class="check full"
+        ><label v-if="form.capture.source !== 'jsonl'" class="check full">
+          <input
+            type="checkbox"
+            v-model="form.capture.auto_expand_forward"
+          />自动打开转发卡片并读取正文
+          <Hint
+            text="只展开新入库或明确重试的卡片。macOS会提前5秒提示，空闲时临时切到微信读取后返回；操作鼠标可中止。未读到正文不按标题识别；只覆盖已加载可访问内容。"
+          />
+        </label>
+        <label
+          v-if="
+            form.capture.source === 'macos_ax' &&
+            form.capture.auto_expand_forward
+          "
+        >
+          转发卡片所在侧
+          <select v-model="form.capture.mac_forward_card_side">
+            <option :value="undefined">默认右侧（自己转发）</option>
+            <option value="right">右侧（自己转发）</option>
+            <option value="left">左侧（他人发送）</option>
+          </select>
+        </label>
+        <label class="check full"
           ><input
             type="checkbox"
             v-model="form.include_existing" />首次分析当前可见消息

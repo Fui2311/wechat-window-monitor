@@ -4,6 +4,25 @@ from wechat_monitor.mail_format import display_time, format_match_mail
 
 
 class MailFormatTests(unittest.TestCase):
+    def test_forward_children_are_separate_and_card_preview_is_not_body(self):
+        _, plain, _ = format_match_mail(
+            {"name": "test"},
+            {
+                "kind": "forward",
+                "text": "outer preview",
+                "children": [
+                    {"text": "first", "sent_at": "2026-11-02T10:00:00+08:00"},
+                    {"text": "second"},
+                ],
+                "incomplete": True,
+            },
+            {"reason": "match"},
+        )
+        self.assertNotIn("outer preview", plain)
+        self.assertIn("【转发内第1条】", plain)
+        self.assertIn("【转发内第2条】", plain)
+        self.assertIn("完整历史未证明", plain)
+
     def test_source_and_capture_time_remain_distinct(self):
         self.assertEqual(display_time("2026-11-02T02:26:23Z"), "2026-11-02 10:26:23")
         _, plain, html = format_match_mail(

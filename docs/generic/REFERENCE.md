@@ -42,9 +42,10 @@
 | /api/windows/:id/start | POST {}，开始独立轮询，需有活动规则 |
 | /api/windows/:id/stop | POST {}，请求停止，当前调用完成后成为stopped |
 | /api/windows/:id/retry | POST {}，失败记录改为pending，由运行时按当前规则处理 |
+| /api/windows/:id/read-forward | POST {message_id}，将该窗口内一条转发记录显式重新排队；需启用auto_expand_forward，开始监控后读取/识别 |
 | /api/windows/:id/records | GET，limit=1..100、before正整数游标、q文本、category=all/matched/error |
 
-捕获配置允许source=macos_ax/windows_uia/jsonl、mac_helper、jsonl_path、mac_header_identifier、mac_list_identifier和process_name。其余字段拒绝保存，避免界面显示保存成功但底层实际忽略配置。
+捕获配置允许source=macos_ax/windows_uia/jsonl、mac_helper、jsonl_path、mac_header_identifier、mac_list_identifier、process_name，以及布尔auto_expand_forward与mac_forward_card_side=left/right。其余字段拒绝保存，避免界面显示保存成功但底层实际忽略配置。
 
 导入 content 最多100000字符，同时受请求正文256KB上限约束。必须符合完整 schema v1，模式与当前窗口目标一致；拒绝重复JSON字段、NaN/Infinity、解释文字、代码、额外字段及空正向条件。revision 必须为当前窗口的整数版本，过期则返回400且不写规则库。成功后使用已有 test / activate 接口试测并明确启用。导出只包含目标、规则格式与约束，不读取模型设置或聊天记录；剪贴板由前端写入，失败时保留可手动复制的文本。
 

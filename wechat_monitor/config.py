@@ -10,6 +10,8 @@ CAPTURE_FIELDS = {
     "mac_header_identifier",
     "mac_list_identifier",
     "process_name",
+    "auto_expand_forward",
+    "mac_forward_card_side",
 }
 
 
@@ -48,8 +50,18 @@ def window_config(body):
     ):
         raise ValueError("采集来源或配置项无效")
     for key, value in capture.items():
+        if key == "auto_expand_forward":
+            if type(value) is not bool:
+                raise ValueError("自动读取转发正文必须为布尔值")
+            continue
+        if key == "mac_forward_card_side" and value not in {"left", "right"}:
+            raise ValueError("转发卡片位置必须为left或right")
         text(value, key, 2000, required=key == "source")
-    capture = {key: value.strip() for key, value in capture.items() if value.strip()}
+    capture = {
+        key: value if type(value) is bool else value.strip()
+        for key, value in capture.items()
+        if type(value) is bool or value.strip()
+    }
     if capture["source"] == "jsonl" and not capture.get("jsonl_path"):
         raise ValueError("JSONL离线输入需要文件路径")
     return dict(
