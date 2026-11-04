@@ -4,6 +4,16 @@ from wechat_monitor.mail_format import display_time, format_match_mail
 
 
 class MailFormatTests(unittest.TestCase):
+    def test_badge_matches_actual_recognition_core(self):
+        for core, label in [("local", "本地规则命中"), ("llm", "LLM 识别命中")]:
+            _, _, html = format_match_mail(
+                {"name": "test"}, {"text": "body"}, {"core": core}
+            )
+            self.assertIn(label, html)
+            self.assertNotIn(
+                "LLM 识别命中" if core == "local" else "本地规则命中", html
+            )
+
     def test_forward_children_are_separate_and_card_preview_is_not_body(self):
         _, plain, _ = format_match_mail(
             {"name": "test"},

@@ -94,13 +94,16 @@ def format_match_mail(window, payload, result, *, received_at=None, record_id=No
         else ""
     )
     footer = f"记录编号 {escape(str(record_id))} · " if record_id is not None else ""
+    core_label = {"llm": "LLM 识别命中", "local": "本地规则命中"}.get(
+        result.get("core"), "规则识别命中"
+    )
     html = f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>微信消息提醒</title>
 <style>@media(max-width:480px){{.outer{{padding:8px!important}}.content{{padding:18px 14px!important}}}}</style></head>
 <body style="margin:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif;color:#0f172a">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td class="outer" align="center" style="padding:24px 12px">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:white;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;table-layout:fixed">
 <tr><td class="content" style="padding:24px;border-top:5px solid #2563eb">
-<p style="margin:0 0 10px;color:#15803d;font-size:13px;font-weight:600">● LLM 识别命中</p>
+<p style="margin:0 0 10px;color:#15803d;font-size:13px;font-weight:600">● {core_label}</p>
 <h1 style="margin:0 0 6px;font-size:23px;line-height:1.4">微信消息提醒</h1>
 <p style="margin:0 0 20px;font-size:14px;color:#64748b;overflow-wrap:anywhere">{escape(source)}</p>
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0">{metadata}</table>
